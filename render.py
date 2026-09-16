@@ -1,14 +1,58 @@
 """Render tabel rekap jadi gambar PNG mirip template STOK BODY HARIAN QC."""
+import os
+import glob as _glob
 from PIL import Image, ImageDraw, ImageFont
 import pandas as pd
 import engine
 
-FONT_DIR = "/usr/share/fonts/truetype/dejavu/"
+# Cari font yang tersedia di sistem (beda-beda antara lokal vs Streamlit Cloud)
+_REGULAR_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans.ttf",
+    "/Library/Fonts/Arial.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+]
+_BOLD_CANDIDATES = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+    "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+    "/Library/Fonts/Arial Bold.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",
+]
+
+
+def _find_font(candidates, keyword):
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    # fallback: cari font apapun yang cocok di sistem
+    for pattern in ("/usr/share/fonts/**/*.ttf", "/usr/local/share/fonts/**/*.ttf"):
+        found = _glob.glob(pattern, recursive=True)
+        if found:
+            match = [f for f in found if keyword.lower() in os.path.basename(f).lower()]
+            return match[0] if match else found[0]
+    return None
+
+
+_FONT_REGULAR = _find_font(_REGULAR_CANDIDATES, "bold" if False else "sans")
+_FONT_BOLD = _find_font(_BOLD_CANDIDATES, "bold") or _FONT_REGULAR
 
 
 def _font(size, bold=False):
-    name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
-    return ImageFont.truetype(FONT_DIR + name, size)
+    path = _FONT_BOLD if bold else _FONT_REGULAR
+    if path:
+        try:
+            return ImageFont.truetype(path, size)
+        except Exception:
+            pass
+    # fallback terakhir: font bawaan PIL (ukuran tetap, tapi app tidak crash)
+    try:
+        return ImageFont.load_default(size)
+    except TypeError:
+        return ImageFont.load_default()
 
 
 DISPLAY_COLS = [
@@ -53,37 +97,82 @@ def _text_center(draw, box, text, font, fill=BLACK):
         y += line_h
 
 
-def render_report(report_df: pd.DataFrame, tanggal_str: str, sesi: str = "PAGI") -> Image.Image:
+LEGAL_BOX_W = 340
+LEGAL_ROW_H = 22
+LEGAL_SIGN_H = 42
+COMPANY_LINE_H = 26
+TANGGAL_LINE_H = 28
+
+
+def render_report(report_df: pd.DataFrame, tanggal_str: str, sesi: str = "PAGI", kota: str = "Gresik") -> Image.Image:
     n_data_cols = len(DISPLAY_COLS)
     table_w = COL_W_NO + COL_W_TYPE + COL_W_ISI + n_data_cols * COL_W_DATA + COL_W_TOTAL
     img_w = table_w + 2 * MARGIN
+
+    legal_box_h = LEGAL_ROW_H + LEGAL_ROW_H + LEGAL_SIGN_H + LEGAL_ROW_H
+    title_block_h = legal_box_h
+    top_h = COMPANY_LINE_H + title_block_h + TANGGAL_LINE_H
 
     groups = [g for g in engine.GROUP_ORDER if g in report_df["RowGroup"].unique()]
     n_rows = len(report_df)
     n_banners = len(groups)
     body_h = n_rows * ROW_H + n_banners * ROW_H
     footer_h = ROW_H * 3
-    img_h = TITLE_H + HEADER_H1 + HEADER_H2 + body_h + footer_h + 2 * MARGIN
+    img_h = top_h + HEADER_H1 + HEADER_H2 + body_h + footer_h + 2 * MARGIN
 
     img = Image.new("RGB", (int(img_w), int(img_h)), "white")
     d = ImageDraw.Draw(img)
 
     f_title = _font(24, bold=True)
     f_sub = _font(13, bold=True)
+    f_legal = _font(11, bold=True)
+    f_legal_sm = _font(10)
     f_h = _font(11, bold=True)
-    f_hh = ImageFont.truetype(FONT_DIR + "DejaVuSans-Bold.ttf", 9)
+    f_hh = _font(9, bold=True)
     f_cell = _font(12)
     f_cell_b = _font(12, bold=True)
 
-    x = MARGIN
+    # ---------- Baris 1: nama perusahaan, center dari ujung kiri ke kanan ----------
     y = MARGIN
-    d.text((x, y), "PT. SURYA PERTIWI NUSANTARA", font=f_sub, fill=BLACK)
-    y2 = y + 22
-    d.text((x, y2), "STOK BODY HARIAN QC TK", font=f_title, fill=BLACK)
-    y3 = y2 + 34
-    d.text((x, y3), f"TANGGAL : {tanggal_str}  ( {sesi} )", font=f_sub, fill=BLACK)
+    _text_center(d, (MARGIN, y, MARGIN + table_w, y + COMPANY_LINE_H), "PT. SURYA PERTIWI NUSANTARA", f_sub)
+    y += COMPANY_LINE_H
 
-    y = MARGIN + TITLE_H
+    # ---------- Kotak legalisasi (kanan) ----------
+    legal_x0 = MARGIN + table_w - LEGAL_BOX_W
+    legal_y0 = y
+    col_w3 = LEGAL_BOX_W / 3
+
+    d.rectangle([legal_x0, legal_y0, legal_x0 + LEGAL_BOX_W, legal_y0 + LEGAL_ROW_H], outline=GRID)
+    _text_center(d, (legal_x0, legal_y0, legal_x0 + LEGAL_BOX_W, legal_y0 + LEGAL_ROW_H),
+                 f"{kota}, {tanggal_str}", f_legal_sm)
+
+    y2 = legal_y0 + LEGAL_ROW_H
+    for i, label in enumerate(["DIBUAT", "DIPERIKSA", "DISETUJUI"]):
+        x0 = legal_x0 + i * col_w3
+        d.rectangle([x0, y2, x0 + col_w3, y2 + LEGAL_ROW_H], outline=GRID)
+        _text_center(d, (x0, y2, x0 + col_w3, y2 + LEGAL_ROW_H), label, f_legal)
+
+    y3 = y2 + LEGAL_ROW_H
+    for i in range(3):
+        x0 = legal_x0 + i * col_w3
+        d.rectangle([x0, y3, x0 + col_w3, y3 + LEGAL_SIGN_H], outline=GRID)
+
+    y4 = y3 + LEGAL_SIGN_H
+    for i, label in enumerate(["INDIRECT", "FOREMAN", "SUPERVISOR"]):
+        x0 = legal_x0 + i * col_w3
+        d.rectangle([x0, y4, x0 + col_w3, y4 + LEGAL_ROW_H], outline=GRID)
+        _text_center(d, (x0, y4, x0 + col_w3, y4 + LEGAL_ROW_H), label, f_legal)
+
+    # ---------- Judul, center di area kiri (sebelah tabel legalisasi) ----------
+    title_area_x1 = legal_x0
+    _text_center(d, (MARGIN, legal_y0, title_area_x1, legal_y0 + legal_box_h), "STOK BODY HARIAN QC TK", f_title)
+
+    # ---------- Baris TANGGAL ----------
+    y = legal_y0 + legal_box_h
+    d.text((MARGIN, y + 6), f"TANGGAL : {tanggal_str}  ( {sesi} )", font=f_sub, fill=BLACK)
+    y += TANGGAL_LINE_H
+
+    y = MARGIN + top_h
     header1_y0 = y
     header1_y1 = y + HEADER_H1
     cx = MARGIN

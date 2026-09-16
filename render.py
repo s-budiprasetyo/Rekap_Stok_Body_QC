@@ -56,13 +56,13 @@ def _font(size, bold=False):
 
 
 DISPLAY_COLS = [
-    ("OP100_PERIKSA",     "OP100", "PERIKSA",       (255, 255, 255)),
-    ("OP105_PERBAIKAN",   "OP105", "PERBAIKAN",     (255, 255, 255)),
+    ("OP100_PERIKSA",     "OP100", "PERIKSA",       (177, 237, 254)),  # biru muda
+    ("OP105_PERBAIKAN",   "OP105", "PERBAIKAN",     (255, 255, 0)),    # kuning
     ("OP107_TDKSET_IJP",  "OP107", "TDK SET\niJP",  (255, 255, 255)),
     ("OP107_TDKSET_CRJP", "OP107", "TDK SET\nCRJP", (255, 255, 255)),
-    ("OP110_GERINDA",     "OP110", "GERINDA",       (146, 208, 80)),
-    ("OP115_CEKULANG",    "OP115", "CEK\nULANG",    (189, 215, 238)),
-    ("OP120_TAP",         "OP120", "TAP",           (255, 153, 204)),
+    ("OP110_GERINDA",     "OP110", "GERINDA",       (203, 251, 139)),  # hijau muda
+    ("OP115_CEKULANG",    "OP115", "CEK\nULANG",    (177, 237, 254)),  # biru muda
+    ("OP120_TAP",         "OP120", "TAP",           (255, 226, 247)),  # pink muda
     ("OP166_FITTINGST",   "OP166", "FITTING\n& ST", (255, 255, 255)),
     ("OP166_KIRIM",       "OP166", "KIRIM",         (255, 255, 255)),
 ]
@@ -163,8 +163,10 @@ def render_report(report_df: pd.DataFrame, tanggal_str: str, sesi: str = "PAGI",
         d.rectangle([x0, y4, x0 + col_w3, y4 + LEGAL_ROW_H], outline=GRID)
         _text_center(d, (x0, y4, x0 + col_w3, y4 + LEGAL_ROW_H), label, f_legal)
 
-    # ---------- Judul, center di area kiri (sebelah tabel legalisasi) ----------
+    # ---------- Judul, di dalam kotak, center di area kiri (sebelah tabel legalisasi) ----------
     title_area_x1 = legal_x0
+    title_pad = 8
+    d.rectangle([MARGIN + title_pad, legal_y0 + title_pad, title_area_x1 - title_pad, legal_y0 + legal_box_h - title_pad], outline=GRID, width=2)
     _text_center(d, (MARGIN, legal_y0, title_area_x1, legal_y0 + legal_box_h), "STOK BODY HARIAN QC TK", f_title)
 
     # ---------- Baris TANGGAL ----------

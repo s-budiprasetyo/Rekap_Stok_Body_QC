@@ -27,7 +27,7 @@ LOKASI_TO_COLKEY = {
     "OP110": "OP110_GERINDA",
     "OP115": "OP115_CEKULANG",
     "OP120": "OP120_TAP",
-    "OP166": "OP166_FITTINGST",
+    "OP166": "OP166_KIRIM",       # data SAP normal -> kolom Kirim (U104ST/S90097/TX60V1 manual -> Fitting & ST)
 }
 
 RAW_COLUMNS = ["No.", "Nama Lokasi", "Type", "Warna", "Kode Pabrik", "Jenis Forming", "Jenis Proses", "Qty"]

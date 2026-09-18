@@ -40,6 +40,18 @@ def today_id_date() -> str:
     return f"{d.day} {BULAN_ID[d.month-1]} {d.year}"
 
 
+def parse_id_date(s: str):
+    """'16 September 2026' -> datetime.date(2026,9,16). Return None kalau gagal parse."""
+    try:
+        parts = str(s).strip().split()
+        day = int(parts[0])
+        month = BULAN_ID.index(parts[1]) + 1
+        year = int(parts[2])
+        return datetime.date(year, month, day)
+    except Exception:
+        return None
+
+
 def normalize_lokasi(nama_lokasi: str) -> str:
     s = str(nama_lokasi).upper().replace("QC", "").strip()
     m = re.search(r"OP\s*\d+", s)
@@ -176,3 +188,74 @@ def compute_totals(report_df: pd.DataFrame) -> dict:
     aksesoris = int(report_df[report_df["IsAksesoris"]]["GrandTotal"].sum())
     pcs1 = int(report_df[~report_df["IsAksesoris"]]["GrandTotal"].sum())
     return {"pcs1": pcs1, "aksesoris": aksesoris, "body": pcs1 + aksesoris}
+
+
+def match_op100_only(op100_grouped_raw: pd.DataFrame, master_df: pd.DataFrame):
+    """
+    Cocokkan data mentah SAP (yang harusnya cuma berisi lokasi OP100) ke master.
+    Return (dict {RowLabel: qty_periksa}, unmatched_df).
+    """
+    auto_master = master_df[master_df["IsManual"] != "TRUE"].copy()
+    result = {}
+    unmatched = []
+    for _, r in op100_grouped_raw.iterrows():
+        if r["Lokasi"] != "OP100":
+            unmatched.append(r)
+            continue
+        type_col = "Type_OP100"
+        cand = auto_master[
+            (auto_master[type_col] == r["Type"]) &
+            (auto_master["Warna"] == r["Warna"]) &
+            (auto_master["KodeNorm"] == r["KodeNorm"]) &
+            (auto_master["JenisForming"].str.upper() == r["Jenis Forming"].upper())
+        ]
+        if cand.empty:
+            unmatched.append(r)
+            continue
+        row_label = cand.iloc[0]["RowLabel"]
+        result[row_label] = result.get(row_label, 0) + int(r["Qty"])
+    unmatched_df = pd.DataFrame(unmatched) if unmatched else pd.DataFrame()
+    return result, unmatched_df
+
+
+def build_report_table_from_history(master_df: pd.DataFrame, history_map: dict,
+                                     op100_values: dict, manual_overrides: dict):
+    """
+    Gabungkan: OP100 dari upload hari ini (op100_values), kolom lain dari snapshot histori
+    (history_map), dan override manual (manual_overrides) untuk baris IsManual=TRUE kalau
+    user mengetik ulang.
+
+    history_map: {RowLabel: {col_key: nilai, ...}} hasil dari gsheets.fetch_history_snapshot
+    Return: report_df, missing_types (list RowLabel yang tidak ada di history_map)
+    """
+    records = []
+    missing_types = []
+
+    for _, m in master_df.iterrows():
+        label = m["RowLabel"]
+        hist_row = history_map.get(label)
+        if hist_row is None:
+            missing_types.append(label)
+            hist_row = {}
+
+        vals = {k: int(hist_row.get(k, 0) or 0) for k in REPORT_COLUMN_KEYS}
+        # OP100 selalu diambil dari upload hari ini (overwrite histori)
+        vals["OP100_PERIKSA"] = int(op100_values.get(label, 0))
+
+        # Override manual kalau user mengedit ulang nilainya hari ini
+        if m["IsManual"] == "TRUE" and label in manual_overrides and manual_overrides[label] not in (None, ""):
+            target_col = m["ManualTargetColumn"]
+            if target_col:
+                vals[target_col] = int(manual_overrides[label])
+
+        grand = sum(vals.get(k, 0) for k in REPORT_COLUMN_KEYS)
+        rec = {"RowLabel": label, "RowGroup": m["RowGroup"], "ISI": m["ISI"],
+               "IsAksesoris": m["IsAksesoris"] == "TRUE", "GrandTotal": grand}
+        rec.update(vals)
+        records.append(rec)
+
+    report_df = pd.DataFrame(records)
+    order_map = {g: i for i, g in enumerate(GROUP_ORDER)}
+    report_df["_order"] = report_df["RowGroup"].map(order_map).fillna(99)
+    report_df = report_df.sort_values(["_order"], kind="stable").drop(columns="_order").reset_index(drop=True)
+    return report_df, missing_types

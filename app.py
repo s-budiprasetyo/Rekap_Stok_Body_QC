@@ -10,6 +10,11 @@ import gsheets
 st.set_page_config(page_title="Rekap Stok Body Harian QC", layout="wide")
 st.title("📋 Rekap Stok Body Harian QC")
 
+with st.expander("🔧 Tes Koneksi Google Sheets (klik untuk cek)"):
+    if st.button("Tes Koneksi Sekarang"):
+        ok, msg = gsheets.test_connection(st)
+        (st.success if ok else st.error)(msg)
+
 MASTER_PATH = "master_type.csv"  # simpan 1 file bareng app.py di repo
 
 

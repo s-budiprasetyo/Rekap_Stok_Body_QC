@@ -15,7 +15,7 @@ with st.expander("🔧 Tes Koneksi Google Sheets (klik untuk cek)"):
         ok, msg = gsheets.test_connection(st)
         (st.success if ok else st.error)(msg)
 
-MASTER_PATH = "master_type.csv"  # simpan 1 file bareng app.py di repo
+MASTER_PATH = "master_type.csv"
 
 
 @st.cache_data
@@ -24,36 +24,81 @@ def _load_master():
 
 
 master_df = _load_master()
-
-# Baris master yang butuh input manual
 MANUAL_ROWS = master_df[master_df["IsManual"] == "TRUE"]["RowLabel"].tolist()
+gsheets_ready = gsheets.is_configured(st)
 
 # ------------------------------------------------------------------
-# 1. Upload file mentah SAP
+# 1. Upload file mentah SAP (+ opsi mode histori)
 # ------------------------------------------------------------------
 st.header("1️⃣ Upload File Mentah SAP")
-st.caption("Upload file Posisi_Stock dari OP100, OP105, OP107, OP110, OP115, OP120, OP166 (boleh sebagian dulu).")
-raw_files = st.file_uploader("Upload file .xlsx", type=["xlsx"], accept_multiple_files=True)
+
+use_history = False
+history_snapshot = None
+history_map = {}
+
+if gsheets_ready:
+    snapshots = gsheets.list_history_snapshots(st)
+    if snapshots:
+        pakai = st.radio(
+            "Mau pakai data histori kemarin? (OP105-OP166 & manual diambil dari histori, "
+            "Anda cuma perlu upload file OP100 hari ini)",
+            ["Tidak, upload semua file seperti biasa", "Ya, pakai histori"],
+            index=0,
+        )
+        use_history = pakai.startswith("Ya")
+    else:
+        st.caption("Belum ada histori tersimpan di Google Sheets — upload semua file seperti biasa dulu.")
+else:
+    st.caption("(Histori Google Sheets belum terhubung — upload semua file seperti biasa.)")
 
 grouped = pd.DataFrame()
-if raw_files:
-    try:
-        grouped = engine.combine_raw_files(raw_files)
-        st.success(f"{len(raw_files)} file dibaca.")
-    except Exception as e:
-        st.error(f"Gagal membaca file: {e}")
+op100_only_file = None
+unmatched_op100 = pd.DataFrame()
+
+if use_history:
+    labels = [s["label"] for s in gsheets.list_history_snapshots(st)]
+    snap_list = gsheets.list_history_snapshots(st)
+    chosen_label = st.selectbox("Pilih snapshot histori (untuk OP105-OP166 & manual):", labels)
+    history_snapshot = next(s for s in snap_list if s["label"] == chosen_label)
+    history_map = gsheets.fetch_history_snapshot(st, history_snapshot["tanggal"], history_snapshot["sesi"])
+    st.caption(f"Histori dipilih: **{chosen_label}** ({len(history_map)} Type tersimpan).")
+
+    op100_only_file = st.file_uploader("Upload file OP100 hari ini (.xlsx)", type=["xlsx"])
+    if op100_only_file:
+        try:
+            grouped = engine.combine_raw_files([op100_only_file])
+            st.success("File OP100 dibaca.")
+        except Exception as e:
+            st.error(f"Gagal membaca file: {e}")
+else:
+    st.caption("Upload file Posisi_Stock dari OP100, OP105, OP107, OP110, OP115, OP120, OP166 (boleh sebagian dulu).")
+    raw_files = st.file_uploader("Upload file .xlsx", type=["xlsx"], accept_multiple_files=True)
+    if raw_files:
+        try:
+            grouped = engine.combine_raw_files(raw_files)
+            st.success(f"{len(raw_files)} file dibaca.")
+        except Exception as e:
+            st.error(f"Gagal membaca file: {e}")
 
 # ------------------------------------------------------------------
 # 2. Input manual
 # ------------------------------------------------------------------
 st.header("2️⃣ Input Manual")
-st.caption("Tidak wajib diisi — kosongkan / biarkan 0 kalau stok tidak ada hari ini.")
+if use_history:
+    st.caption("Nilai default diambil dari histori yang dipilih — edit kalau ada perubahan hari ini.")
+else:
+    st.caption("Tidak wajib diisi — kosongkan / biarkan 0 kalau stok tidak ada hari ini.")
 
 manual_values = {}
 cols = st.columns(3)
 for idx, label in enumerate(MANUAL_ROWS):
+    default_val = 0
+    if use_history and label in history_map:
+        target_col = master_df.loc[master_df["RowLabel"] == label, "ManualTargetColumn"].iloc[0]
+        if target_col:
+            default_val = int(history_map[label].get(target_col, 0) or 0)
     with cols[idx % 3]:
-        manual_values[label] = st.number_input(label, min_value=0, value=0, step=1, key=f"manual_{label}")
+        manual_values[label] = st.number_input(label, min_value=0, value=default_val, step=1, key=f"manual_{label}")
 
 # ------------------------------------------------------------------
 # 3. Tanggal & Sesi
@@ -70,24 +115,40 @@ with col2:
 # ------------------------------------------------------------------
 st.header("4️⃣ Generate Laporan")
 
-report_df = None
-if st.button("🖼️ Generate", type="primary", disabled=grouped.empty):
-    report_df, unmatched_df = engine.build_report_table(grouped, master_df, manual_values)
+can_generate = (not grouped.empty) if not use_history else (op100_only_file is not None)
+
+if st.button("🖼️ Generate", type="primary", disabled=not can_generate):
+    if use_history:
+        op100_values, unmatched_op100 = engine.match_op100_only(grouped, master_df)
+        report_df, missing_types = engine.build_report_table_from_history(
+            master_df, history_map, op100_values, manual_values
+        )
+        st.session_state["missing_types"] = missing_types
+        st.session_state["unmatched_df"] = unmatched_op100
+    else:
+        report_df, unmatched_df = engine.build_report_table(grouped, master_df, manual_values)
+        st.session_state["missing_types"] = []
+        st.session_state["unmatched_df"] = unmatched_df
+
     st.session_state["report_df"] = report_df
-    st.session_state["unmatched_df"] = unmatched_df
     st.session_state["tanggal_str"] = tanggal_str
     st.session_state["sesi"] = sesi
 
-if grouped.empty:
-    st.info("⬆️ Upload file SAP dulu di Langkah 1.")
+if not can_generate:
+    st.info("⬆️ Upload file yang diperlukan dulu di Langkah 1.")
 
 if "report_df" in st.session_state:
     report_df = st.session_state["report_df"]
-    unmatched_df = st.session_state["unmatched_df"]
+    unmatched_df = st.session_state.get("unmatched_df", pd.DataFrame())
+    missing_types = st.session_state.get("missing_types", [])
 
     if not unmatched_df.empty:
         with st.expander(f"⚠️ {len(unmatched_df)} baris data SAP TIDAK cocok ke master (cek Type/Warna/Kode Pabrik/Forming)"):
             st.dataframe(unmatched_df[["Lokasi", "Type", "Warna", "KodeNorm", "Jenis Forming", "Qty"]], use_container_width=True)
+
+    if missing_types:
+        with st.expander(f"⚠️ {len(missing_types)} Type tidak ditemukan di histori yang dipilih (diisi 0 untuk kolom selain OP100)"):
+            st.write(missing_types)
 
     img = render.render_report(report_df, st.session_state["tanggal_str"], st.session_state["sesi"])
     buf = io.BytesIO()
@@ -109,7 +170,7 @@ if "report_df" in st.session_state:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
     with colC:
-        if gsheets.is_configured(st):
+        if gsheets_ready:
             if st.button("☁️ Simpan ke Histori (Google Sheets)"):
                 ok, msg = gsheets.append_history(st, report_df, st.session_state["tanggal_str"], st.session_state["sesi"])
                 (st.success if ok else st.error)(msg)

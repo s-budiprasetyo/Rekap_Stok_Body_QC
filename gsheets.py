@@ -55,8 +55,64 @@ def test_connection(st) -> tuple[bool, str]:
 
     return True, f"✅ Koneksi berhasil! Sheet '{sh.title}' ditemukan, tab yang ada: {worksheets}"
 
+DATA_COLS = ["OP100_PERIKSA", "OP105_PERBAIKAN", "OP107_TDKSET_IJP", "OP107_TDKSET_CRJP",
+             "OP110_GERINDA", "OP115_CEKULANG", "OP120_TAP", "OP166_FITTINGST", "OP166_KIRIM"]
 
 
+def list_history_snapshots(st):
+    """Return list of dict {'tanggal':str,'sesi':str,'label':str,'date_obj':date}, terbaru dulu."""
+    import engine
+    import datetime as _dt
+    if not is_configured(st):
+        return []
+    try:
+        client = _get_client(st)
+        sh = client.open(st.secrets["gsheet_name"])
+        ws = sh.worksheet("Histori")
+        records = ws.get_all_records()
+    except Exception:
+        return []
+
+    seen = {}
+    for r in records:
+        tanggal, sesi = str(r.get("Tanggal", "")).strip(), str(r.get("Sesi", "")).strip()
+        if not tanggal or not sesi:
+            continue
+        seen[(tanggal, sesi)] = True
+
+    items = []
+    for (tanggal, sesi) in seen:
+        d = engine.parse_id_date(tanggal)
+        items.append({"tanggal": tanggal, "sesi": sesi, "date_obj": d,
+                       "label": f"{tanggal} ( {sesi} )"})
+    items.sort(key=lambda x: (x["date_obj"] or _dt.date.min, x["sesi"]), reverse=True)
+    return items
+
+
+def fetch_history_snapshot(st, tanggal: str, sesi: str):
+    """Return dict {RowLabel: {col_key: nilai, ...}} untuk snapshot tanggal+sesi tertentu."""
+    if not is_configured(st):
+        return {}
+    try:
+        client = _get_client(st)
+        sh = client.open(st.secrets["gsheet_name"])
+        ws = sh.worksheet("Histori")
+        records = ws.get_all_records()
+    except Exception:
+        return {}
+
+    result = {}
+    for r in records:
+        if str(r.get("Tanggal", "")).strip() != tanggal or str(r.get("Sesi", "")).strip() != sesi:
+            continue
+        label = str(r.get("RowLabel", "")).strip()
+        if not label:
+            continue
+        result[label] = {c: int(r.get(c, 0) or 0) for c in DATA_COLS}
+    return result
+
+
+def append_history(st, report_df: pd.DataFrame, tanggal_str: str, sesi: str) -> tuple[bool, str]:
     """Tambahkan 1 baris per Type ke sheet 'Histori'. Return (sukses, pesan)."""
     if not is_configured(st):
         return False, "Google Sheets belum dikonfigurasi (lihat Secrets)."

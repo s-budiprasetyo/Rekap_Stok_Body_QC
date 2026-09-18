@@ -11,9 +11,15 @@ st.set_page_config(page_title="Rekap Stok Body Harian QC", layout="wide")
 st.title("📋 Rekap Stok Body Harian QC")
 
 with st.expander("🔧 Tes Koneksi Google Sheets (klik untuk cek)"):
-    if st.button("Tes Koneksi Sekarang"):
-        ok, msg = gsheets.test_connection(st)
-        (st.success if ok else st.error)(msg)
+    colT1, colT2 = st.columns(2)
+    with colT1:
+        if st.button("Tes Koneksi Sekarang"):
+            ok, msg = gsheets.test_connection(st)
+            (st.success if ok else st.error)(msg)
+    with colT2:
+        if st.button("🩹 Perbaiki Header Histori"):
+            ok, msg = gsheets.repair_header(st)
+            (st.success if ok else st.error)(msg)
 
 MASTER_PATH = "master_type.csv"
 
@@ -58,7 +64,12 @@ unmatched_op100 = pd.DataFrame()
 if use_history:
     labels = [s["label"] for s in gsheets.list_history_snapshots(st)]
     snap_list = gsheets.list_history_snapshots(st)
-    chosen_label = st.selectbox("Pilih snapshot histori (untuk OP105-OP166 & manual):", labels)
+    # default: snapshot paling baru dengan Sesi SORE (kemarin sore), kalau tidak ada -> paling atas
+    default_idx = next((i for i, s in enumerate(snap_list) if s["sesi"] == "SORE"), 0)
+    chosen_label = st.selectbox(
+        "Pilih snapshot histori (untuk OP105-OP166 & manual) — biasanya: kemarin, Sore:",
+        labels, index=default_idx,
+    )
     history_snapshot = next(s for s in snap_list if s["label"] == chosen_label)
     history_map = gsheets.fetch_history_snapshot(st, history_snapshot["tanggal"], history_snapshot["sesi"])
     st.caption(f"Histori dipilih: **{chosen_label}** ({len(history_map)} Type tersimpan).")

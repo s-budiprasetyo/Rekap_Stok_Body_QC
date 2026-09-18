@@ -112,6 +112,38 @@ def fetch_history_snapshot(st, tanggal: str, sesi: str):
     return result
 
 
+HEADER_ROW = ["Timestamp", "Tanggal", "Sesi", "RowLabel", "RowGroup"] + DATA_COLS + ["GrandTotal"]
+
+
+def _ensure_header(ws) -> bool:
+    """Pastikan baris 1 berisi header yang benar. Sisipkan kalau belum ada/salah. Return True kalau ada perubahan."""
+    values = ws.get_all_values()
+    if not values:
+        ws.append_row(HEADER_ROW)
+        return True
+    first_row = values[0]
+    if first_row[:1] != ["Timestamp"]:
+        ws.insert_row(HEADER_ROW, index=1)
+        return True
+    return False
+
+
+def repair_header(st) -> tuple[bool, str]:
+    """Tombol perbaikan manual: cek & tambahkan header ke tab Histori kalau belum ada."""
+    if not is_configured(st):
+        return False, "Google Sheets belum dikonfigurasi."
+    try:
+        client = _get_client(st)
+        sh = client.open(st.secrets["gsheet_name"])
+        ws = sh.worksheet("Histori")
+        changed = _ensure_header(ws)
+        if changed:
+            return True, "✅ Header berhasil ditambahkan/diperbaiki di baris 1."
+        return True, "Header sudah benar, tidak ada yang perlu diperbaiki."
+    except Exception as e:
+        return False, f"Gagal memperbaiki header: {e}"
+
+
 def append_history(st, report_df: pd.DataFrame, tanggal_str: str, sesi: str) -> tuple[bool, str]:
     """Tambahkan 1 baris per Type ke sheet 'Histori'. Return (sukses, pesan)."""
     if not is_configured(st):
@@ -123,21 +155,13 @@ def append_history(st, report_df: pd.DataFrame, tanggal_str: str, sesi: str) -> 
             ws = sh.worksheet("Histori")
         except Exception:
             ws = sh.add_worksheet(title="Histori", rows=1000, cols=20)
-            header = ["Timestamp", "Tanggal", "Sesi", "RowLabel", "RowGroup"] + \
-                     [k for k, *_ in [
-                         ("OP100_PERIKSA",), ("OP105_PERBAIKAN",), ("OP107_TDKSET_IJP",),
-                         ("OP107_TDKSET_CRJP",), ("OP110_GERINDA",), ("OP115_CEKULANG",),
-                         ("OP120_TAP",), ("OP166_FITTINGST",), ("OP166_KIRIM",),
-                     ]] + ["GrandTotal"]
-            ws.append_row(header)
+        _ensure_header(ws)
 
         now = datetime.datetime.now().isoformat(timespec="seconds")
-        data_cols = ["OP100_PERIKSA", "OP105_PERBAIKAN", "OP107_TDKSET_IJP", "OP107_TDKSET_CRJP",
-                     "OP110_GERINDA", "OP115_CEKULANG", "OP120_TAP", "OP166_FITTINGST", "OP166_KIRIM"]
         rows_to_add = []
         for _, r in report_df.iterrows():
             row = [now, tanggal_str, sesi, r["RowLabel"], r["RowGroup"]] + \
-                  [int(r.get(c, 0) or 0) for c in data_cols] + [int(r["GrandTotal"])]
+                  [int(r.get(c, 0) or 0) for c in DATA_COLS] + [int(r["GrandTotal"])]
             rows_to_add.append(row)
         ws.append_rows(rows_to_add, value_input_option="USER_ENTERED")
         return True, f"{len(rows_to_add)} baris tersimpan ke Google Sheets."

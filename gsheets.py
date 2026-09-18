@@ -25,7 +25,38 @@ def _get_client(st):
     return gspread.authorize(creds)
 
 
-def append_history(st, report_df: pd.DataFrame, tanggal_str: str, sesi: str) -> tuple[bool, str]:
+def test_connection(st) -> tuple[bool, str]:
+    """Cek koneksi ke Google Sheets tanpa menulis data apapun. Return (sukses, pesan detail)."""
+    if not is_configured(st):
+        return False, (
+            "Secrets belum diisi. Butuh 2 hal di Streamlit Secrets: "
+            "`gsheet_name` (nama Google Sheet) dan blok `[gcp_service_account]` "
+            "(isi dari file JSON service account)."
+        )
+    try:
+        client = _get_client(st)
+    except Exception as e:
+        return False, f"Gagal baca credential service account. Cek format Secrets Anda. Detail: {e}"
+
+    try:
+        sh = client.open(st.secrets["gsheet_name"])
+    except Exception as e:
+        return False, (
+            f"Berhasil login sebagai service account, TAPI gagal membuka Google Sheet "
+            f"bernama '{st.secrets.get('gsheet_name')}'. Kemungkinan: (1) nama sheet di Secrets "
+            f"tidak persis sama dengan nama file Google Sheet Anda, atau (2) sheet belum di-Share "
+            f"ke email service account sebagai Editor. Detail teknis: {e}"
+        )
+
+    try:
+        worksheets = [w.title for w in sh.worksheets()]
+    except Exception as e:
+        return False, f"Sheet ditemukan tapi gagal baca daftar tab di dalamnya. Detail: {e}"
+
+    return True, f"✅ Koneksi berhasil! Sheet '{sh.title}' ditemukan, tab yang ada: {worksheets}"
+
+
+
     """Tambahkan 1 baris per Type ke sheet 'Histori'. Return (sukses, pesan)."""
     if not is_configured(st):
         return False, "Google Sheets belum dikonfigurasi (lihat Secrets)."

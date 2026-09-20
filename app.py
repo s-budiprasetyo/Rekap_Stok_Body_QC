@@ -33,6 +33,19 @@ master_df = _load_master()
 MANUAL_ROWS = master_df[master_df["IsManual"] == "TRUE"]["RowLabel"].tolist()
 gsheets_ready = gsheets.is_configured(st)
 
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_snapshots():
+    """Daftar snapshot histori — disimpan sementara 60 detik supaya tidak nge-hit
+    Google Sheets berkali-kali tiap kali ada interaksi (ketik/geser input)."""
+    return gsheets.list_history_snapshots(st)
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _cached_history_map(tanggal: str, sesi: str):
+    return gsheets.fetch_history_snapshot(st, tanggal, sesi)
+
+
 # ------------------------------------------------------------------
 # 1. Upload file mentah SAP (+ opsi mode histori)
 # ------------------------------------------------------------------
@@ -43,8 +56,8 @@ history_snapshot = None
 history_map = {}
 
 if gsheets_ready:
-    snapshots = gsheets.list_history_snapshots(st)
-    if snapshots:
+    snap_list_top = _cached_snapshots()
+    if snap_list_top:
         pakai = st.radio(
             "Mau pakai data histori kemarin? (OP105-OP166 & manual diambil dari histori, "
             "Anda cuma perlu upload file OP100 hari ini)",
@@ -62,8 +75,8 @@ op100_only_file = None
 unmatched_op100 = pd.DataFrame()
 
 if use_history:
-    labels = [s["label"] for s in gsheets.list_history_snapshots(st)]
-    snap_list = gsheets.list_history_snapshots(st)
+    snap_list = _cached_snapshots()
+    labels = [s["label"] for s in snap_list]
     # default: snapshot paling baru dengan Sesi SORE (kemarin sore), kalau tidak ada -> paling atas
     default_idx = next((i for i, s in enumerate(snap_list) if s["sesi"] == "SORE"), 0)
     chosen_label = st.selectbox(
@@ -71,7 +84,7 @@ if use_history:
         labels, index=default_idx,
     )
     history_snapshot = next(s for s in snap_list if s["label"] == chosen_label)
-    history_map = gsheets.fetch_history_snapshot(st, history_snapshot["tanggal"], history_snapshot["sesi"])
+    history_map = _cached_history_map(history_snapshot["tanggal"], history_snapshot["sesi"])
     st.caption(f"Histori dipilih: **{chosen_label}** ({len(history_map)} Type tersimpan).")
 
     op100_only_file = st.file_uploader("Upload file OP100 hari ini (.xlsx)", type=["xlsx"])

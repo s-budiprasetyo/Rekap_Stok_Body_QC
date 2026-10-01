@@ -21,6 +21,23 @@ with st.expander("🔧 Tes Koneksi Google Sheets (klik untuk cek)"):
             ok, msg = gsheets.repair_header(st)
             (st.success if ok else st.error)(msg)
 
+    st.caption(
+        "Histori otomatis tersimpan per-tab per-bulan (mis. 'Oktober 2026') dalam 1 file Google Sheet "
+        "yang sama — tidak perlu bikin file baru tiap bulan. Dipakai sekali saja kalau ada tab lama "
+        "yang perlu diganti nama (mis. tab lama 'Histori' -> 'September 2026'):"
+    )
+    colR1, colR2, colR3 = st.columns([2, 2, 1])
+    with colR1:
+        old_tab = st.text_input("Nama tab lama", value="Histori", key="rename_old")
+    with colR2:
+        new_tab = st.text_input("Nama tab baru", value="September 2026", key="rename_new")
+    with colR3:
+        st.write("")
+        st.write("")
+        if st.button("Ganti Nama"):
+            ok, msg = gsheets.rename_tab(st, old_tab, new_tab)
+            (st.success if ok else st.error)(msg)
+
 MASTER_PATH = "master_type.csv"
 
 

@@ -112,6 +112,54 @@ def combine_raw_files(files) -> pd.DataFrame:
     return grouped
 
 
+ALL_OP_LOCATIONS = ["OP100", "OP105", "OP107", "OP110", "OP115", "OP120", "OP166"]
+
+
+def combine_raw_files_dedup(files):
+    """
+    Baca semua file upload, deteksi lokasi OP per file dari isinya (kolom 'Nama Lokasi').
+    Kalau ada 2+ file untuk lokasi OP yang sama, PAKAI file yang pertama diupload dan
+    ABAIKAN sisanya (tidak dijumlahkan/di-sum).
+
+    Return (grouped_df, report) dengan
+    report = {
+        "used": {lokasi: filename},              # file yang dipakai per lokasi
+        "duplicates": {lokasi: [filename, ...]},  # file yang diabaikan karena duplikat
+        "missing": [lokasi, ...],                 # OP yang belum ada file sama sekali (opsional, boleh kosong)
+    }
+    """
+    used = {}
+    duplicates = {}
+    frames = []
+    for f in files:
+        df = read_raw_file(f)
+        fname = getattr(f, "name", "file")
+        if df.empty:
+            continue
+        lokasi_counts = df["Lokasi"].value_counts()
+        lokasi = lokasi_counts.idxmax() if not lokasi_counts.empty else None
+        if lokasi is None:
+            continue
+        if lokasi in used:
+            duplicates.setdefault(lokasi, []).append(fname)
+            continue
+        used[lokasi] = fname
+        frames.append(df)
+
+    missing = [op for op in ALL_OP_LOCATIONS if op not in used]
+
+    if frames:
+        combined = pd.concat(frames, ignore_index=True)
+        grouped = combined.groupby(
+            ["Lokasi", "Type", "Warna", "KodeNorm", "Jenis Forming"], as_index=False
+        )["Qty"].sum()
+    else:
+        grouped = pd.DataFrame()
+
+    report = {"used": used, "duplicates": duplicates, "missing": missing}
+    return grouped, report
+
+
 def load_master(file) -> pd.DataFrame:
     df = pd.read_csv(file, dtype=str).fillna("")
     df["KodeNorm"] = df["KodePabrik"].apply(lambda v: normalize_kode_pabrik(v) if v else "")

@@ -157,6 +157,43 @@ def build_excel(report_df: pd.DataFrame, tanggal_str: str, sesi: str) -> bytes:
     for c in range(4, last_col + 1):
         ws.column_dimensions[get_column_letter(c)].width = 12
 
+    _write_raw_data_sheet(wb, report_df)
+
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+def _write_raw_data_sheet(wb, report_df: pd.DataFrame):
+    """Sheet tersembunyi berisi data mentah report_df apa adanya (bukan untuk dilihat
+    manusia), supaya bisa dibaca ulang secara programatik oleh fitur 'Ambil Data'
+    tanpa perlu parsing ulang layout tabel yang sudah diformat."""
+    ws2 = wb.create_sheet("RawData")
+    cols = ["RowLabel", "RowGroup", "ISI", "IsAksesoris", "GrandTotal"] + engine.REPORT_COLUMN_KEYS
+    ws2.append(cols)
+    for _, r in report_df.iterrows():
+        row = [r.get("RowLabel"), r.get("RowGroup"), r.get("ISI"), bool(r.get("IsAksesoris")),
+               int(r.get("GrandTotal", 0) or 0)]
+        row += [int(r.get(k, 0) or 0) for k in engine.REPORT_COLUMN_KEYS]
+        ws2.append(row)
+    ws2.sheet_state = "hidden"
+
+
+def read_report_df(xlsx_bytes: bytes) -> pd.DataFrame:
+    """Baca ulang report_df dari sheet 'RawData' tersembunyi di file hasil build_excel().
+    Dipakai oleh halaman 'Ambil Data' untuk me-render ulang gambar PNG dari Excel yang
+    tersimpan otomatis di Google Drive."""
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes), data_only=True)
+    if "RawData" not in wb.sheetnames:
+        raise ValueError("File Excel ini tidak punya sheet RawData (bukan hasil generate aplikasi ini).")
+    ws = wb["RawData"]
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        raise ValueError("Sheet RawData kosong.")
+    header = list(rows[0])
+    data_rows = [r for r in rows[1:] if r and r[0] is not None]
+    df = pd.DataFrame(data_rows, columns=header)
+    df["IsAksesoris"] = df["IsAksesoris"].astype(bool)
+    for c in engine.REPORT_COLUMN_KEYS + ["GrandTotal"]:
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+    return df

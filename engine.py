@@ -1,0 +1,309 @@
+"""
+Engine v2 — merekap data mentah SAP jadi laporan STOK BODY HARIAN QC,
+berbasis master_type.csv (baris & kunci pencocokan TETAP, ditentukan user).
+"""
+import re
+import datetime
+import pandas as pd
+
+REPORT_COLUMNS = [
+    ("OP100_PERIKSA",     "OP100", "PERIKSA"),
+    ("OP105_PERBAIKAN",   "OP105", "PERBAIKAN"),
+    ("OP107_TDKSET_IJP",  "OP107", "TDK SET\niJP"),
+    ("OP107_TDKSET_CRJP", "OP107", "TDK SET\nCRJP"),
+    ("OP110_GERINDA",     "OP110", "GERINDA"),
+    ("OP115_CEKULANG",    "OP115", "CEK\nULANG"),
+    ("OP120_TAP",         "OP120", "TAP"),
+    ("OP166_FITTINGST",   "OP166", "FITTING\n& ST"),
+    ("OP166_KIRIM",       "OP166", "KIRIM"),
+]
+REPORT_COLUMN_KEYS = [c[0] for c in REPORT_COLUMNS]
+GROUP_ORDER = ["TYPE C", "TYPE L", "TYPE S", "TYPE U"]
+
+LOKASI_TO_COLKEY = {
+    "OP100": "OP100_PERIKSA",
+    "OP105": "OP105_PERBAIKAN",
+    "OP107": "OP107_TDKSET_IJP",   # dari file OP107 SAP selalu masuk kolom iJP; CRJP manual
+    "OP110": "OP110_GERINDA",
+    "OP115": "OP115_CEKULANG",
+    "OP120": "OP120_TAP",
+    "OP166": "OP166_KIRIM",       # data SAP normal -> kolom Kirim (U104ST/S90097/TX60V1 manual -> Fitting & ST)
+}
+
+RAW_COLUMNS = ["No.", "Nama Lokasi", "Type", "Warna", "Kode Pabrik", "Jenis Forming", "Jenis Proses", "Qty"]
+
+BULAN_ID = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"]
+
+
+def today_id_date() -> str:
+    d = datetime.date.today()
+    return f"{d.day} {BULAN_ID[d.month-1]} {d.year}"
+
+
+def parse_id_date(s: str):
+    """'16 September 2026' -> datetime.date(2026,9,16). Return None kalau gagal parse."""
+    try:
+        parts = str(s).strip().split()
+        day = int(parts[0])
+        month = BULAN_ID.index(parts[1]) + 1
+        year = int(parts[2])
+        return datetime.date(year, month, day)
+    except Exception:
+        return None
+
+
+def normalize_lokasi(nama_lokasi: str) -> str:
+    s = str(nama_lokasi).upper().replace("QC", "").strip()
+    m = re.search(r"OP\s*\d+", s)
+    return m.group(0).replace(" ", "") if m else s
+
+
+def normalize_kode_pabrik(v) -> str:
+    """Samakan '01'/'1'/1/1.0 semua jadi '1'."""
+    s = str(v).strip()
+    s = re.sub(r"\D", "", s)
+    return str(int(s)) if s else ""
+
+
+def read_raw_file(file) -> pd.DataFrame:
+    df = pd.read_excel(file, dtype=str)
+    df.columns = [str(c).strip() for c in df.columns]
+    rename_map = {}
+    for c in df.columns:
+        cl = c.lower().replace(".", "").strip()
+        if cl == "no":
+            rename_map[c] = "No."
+        elif "lokasi" in cl:
+            rename_map[c] = "Nama Lokasi"
+        elif cl == "type":
+            rename_map[c] = "Type"
+        elif "warna" in cl:
+            rename_map[c] = "Warna"
+        elif "pabrik" in cl:
+            rename_map[c] = "Kode Pabrik"
+        elif "forming" in cl:
+            rename_map[c] = "Jenis Forming"
+        elif "proses" in cl:
+            rename_map[c] = "Jenis Proses"
+        elif cl == "qty":
+            rename_map[c] = "Qty"
+    df = df.rename(columns=rename_map)
+    missing = [c for c in RAW_COLUMNS if c not in df.columns]
+    if missing:
+        raise ValueError(f"Kolom tidak ditemukan: {missing}. Kolom yang ada: {list(df.columns)}")
+    df = df[RAW_COLUMNS].copy()
+    df = df.dropna(subset=["Type", "Nama Lokasi"])
+    df["Qty"] = pd.to_numeric(df["Qty"], errors="coerce").fillna(0).astype(int)
+    for c in ["Type", "Warna", "Kode Pabrik", "Jenis Forming", "Jenis Proses", "Nama Lokasi"]:
+        df[c] = df[c].astype(str).str.strip()
+    df["Lokasi"] = df["Nama Lokasi"].apply(normalize_lokasi)
+    df["KodeNorm"] = df["Kode Pabrik"].apply(normalize_kode_pabrik)
+    return df
+
+
+def combine_raw_files(files) -> pd.DataFrame:
+    frames = [read_raw_file(f) for f in files]
+    if not frames:
+        return pd.DataFrame()
+    combined = pd.concat(frames, ignore_index=True)
+    grouped = combined.groupby(
+        ["Lokasi", "Type", "Warna", "KodeNorm", "Jenis Forming"], as_index=False
+    )["Qty"].sum()
+    return grouped
+
+
+ALL_OP_LOCATIONS = ["OP100", "OP105", "OP107", "OP110", "OP115", "OP120", "OP166"]
+
+
+def combine_raw_files_dedup(files):
+    """
+    Baca semua file upload, deteksi lokasi OP per file dari isinya (kolom 'Nama Lokasi').
+    Kalau ada 2+ file untuk lokasi OP yang sama, PAKAI file yang pertama diupload dan
+    ABAIKAN sisanya (tidak dijumlahkan/di-sum).
+
+    Return (grouped_df, report) dengan
+    report = {
+        "used": {lokasi: filename},              # file yang dipakai per lokasi
+        "duplicates": {lokasi: [filename, ...]},  # file yang diabaikan karena duplikat
+        "missing": [lokasi, ...],                 # OP yang belum ada file sama sekali (opsional, boleh kosong)
+    }
+    """
+    used = {}
+    duplicates = {}
+    frames = []
+    for f in files:
+        df = read_raw_file(f)
+        fname = getattr(f, "name", "file")
+        if df.empty:
+            continue
+        lokasi_counts = df["Lokasi"].value_counts()
+        lokasi = lokasi_counts.idxmax() if not lokasi_counts.empty else None
+        if lokasi is None:
+            continue
+        if lokasi in used:
+            duplicates.setdefault(lokasi, []).append(fname)
+            continue
+        used[lokasi] = fname
+        frames.append(df)
+
+    missing = [op for op in ALL_OP_LOCATIONS if op not in used]
+
+    if frames:
+        combined = pd.concat(frames, ignore_index=True)
+        grouped = combined.groupby(
+            ["Lokasi", "Type", "Warna", "KodeNorm", "Jenis Forming"], as_index=False
+        )["Qty"].sum()
+    else:
+        grouped = pd.DataFrame()
+
+    report = {"used": used, "duplicates": duplicates, "missing": missing}
+    return grouped, report
+
+
+def load_master(file) -> pd.DataFrame:
+    df = pd.read_csv(file, dtype=str).fillna("")
+    df["KodeNorm"] = df["KodePabrik"].apply(lambda v: normalize_kode_pabrik(v) if v else "")
+    return df
+
+
+def build_report_table(grouped_raw: pd.DataFrame, master_df: pd.DataFrame, manual_values: dict):
+    """
+    manual_values: dict {RowLabel: int}. Nilai otomatis dimasukkan ke ManualTargetColumn
+    baris tsb (kalau ada), kalau tidak ada -> langsung nambah ke Grand Total saja.
+    """
+    auto_master = master_df[master_df["IsManual"] != "TRUE"].copy()
+    data = {row["RowLabel"]: {k: 0 for k in REPORT_COLUMN_KEYS} for _, row in master_df.iterrows()}
+
+    unmatched = []
+    for _, r in grouped_raw.iterrows():
+        lokasi = r["Lokasi"]
+        type_col = f"Type_{lokasi}"
+        if type_col not in auto_master.columns:
+            unmatched.append(r)
+            continue
+        cand = auto_master[
+            (auto_master[type_col] == r["Type"]) &
+            (auto_master["Warna"] == r["Warna"]) &
+            (auto_master["KodeNorm"] == r["KodeNorm"]) &
+            (auto_master["JenisForming"].str.upper() == r["Jenis Forming"].upper())
+        ]
+        if cand.empty:
+            unmatched.append(r)
+            continue
+        if len(cand) > 1:
+            if lokasi == "OP107":
+                pick = cand[cand["OnlyFromOP107"] == "TRUE"]
+            else:
+                pick = cand[cand["OnlyFromOP107"] != "TRUE"]
+            cand = pick if not pick.empty else cand.iloc[[0]]
+        row_label = cand.iloc[0]["RowLabel"]
+        col_key = LOKASI_TO_COLKEY.get(lokasi)
+        if col_key:
+            data[row_label][col_key] += int(r["Qty"])
+
+    for row_label, val in (manual_values or {}).items():
+        if row_label not in data or not val:
+            continue
+        master_row = master_df[master_df["RowLabel"] == row_label]
+        target_col = master_row.iloc[0]["ManualTargetColumn"] if not master_row.empty else ""
+        v = int(val)
+        if target_col:
+            data[row_label][target_col] = data[row_label].get(target_col, 0) + v
+        else:
+            data[row_label]["_DIRECT_TOTAL_"] = data[row_label].get("_DIRECT_TOTAL_", 0) + v
+
+    records = []
+    for _, m in master_df.iterrows():
+        label = m["RowLabel"]
+        vals = data[label]
+        grand = sum(vals.get(k, 0) for k in REPORT_COLUMN_KEYS) + vals.get("_DIRECT_TOTAL_", 0)
+        rec = {"RowLabel": label, "RowGroup": m["RowGroup"], "ISI": m["ISI"],
+               "IsAksesoris": m["IsAksesoris"] == "TRUE", "GrandTotal": grand}
+        for k in REPORT_COLUMN_KEYS:
+            rec[k] = vals.get(k, 0)
+        records.append(rec)
+
+    report_df = pd.DataFrame(records)
+    order_map = {g: i for i, g in enumerate(GROUP_ORDER)}
+    report_df["_order"] = report_df["RowGroup"].map(order_map).fillna(99)
+    report_df = report_df.sort_values(["_order"], kind="stable").drop(columns="_order").reset_index(drop=True)
+
+    unmatched_df = pd.DataFrame(unmatched) if unmatched else pd.DataFrame()
+    return report_df, unmatched_df
+
+
+def compute_totals(report_df: pd.DataFrame) -> dict:
+    aksesoris = int(report_df[report_df["IsAksesoris"]]["GrandTotal"].sum())
+    pcs1 = int(report_df[~report_df["IsAksesoris"]]["GrandTotal"].sum())
+    return {"pcs1": pcs1, "aksesoris": aksesoris, "body": pcs1 + aksesoris}
+
+
+def match_op100_only(op100_grouped_raw: pd.DataFrame, master_df: pd.DataFrame):
+    """
+    Cocokkan data mentah SAP (yang harusnya cuma berisi lokasi OP100) ke master.
+    Return (dict {RowLabel: qty_periksa}, unmatched_df).
+    """
+    auto_master = master_df[master_df["IsManual"] != "TRUE"].copy()
+    result = {}
+    unmatched = []
+    for _, r in op100_grouped_raw.iterrows():
+        if r["Lokasi"] != "OP100":
+            unmatched.append(r)
+            continue
+        type_col = "Type_OP100"
+        cand = auto_master[
+            (auto_master[type_col] == r["Type"]) &
+            (auto_master["Warna"] == r["Warna"]) &
+            (auto_master["KodeNorm"] == r["KodeNorm"]) &
+            (auto_master["JenisForming"].str.upper() == r["Jenis Forming"].upper())
+        ]
+        if cand.empty:
+            unmatched.append(r)
+            continue
+        row_label = cand.iloc[0]["RowLabel"]
+        result[row_label] = result.get(row_label, 0) + int(r["Qty"])
+    unmatched_df = pd.DataFrame(unmatched) if unmatched else pd.DataFrame()
+    return result, unmatched_df
+
+
+def build_report_table_from_history(master_df: pd.DataFrame, history_map: dict,
+                                     op100_values: dict, manual_overrides: dict):
+    """
+    Gabungkan: OP100 dari upload hari ini (op100_values), kolom lain dari snapshot histori
+    (history_map), dan override manual (manual_overrides) untuk baris IsManual=TRUE kalau
+    user mengetik ulang.
+
+    history_map: {RowLabel: {col_key: nilai, ...}} hasil dari gsheets.fetch_history_snapshot
+    Return: report_df, missing_types (list RowLabel yang tidak ada di history_map)
+    """
+    records = []
+    missing_types = []
+
+    for _, m in master_df.iterrows():
+        label = m["RowLabel"]
+        hist_row = history_map.get(label)
+        if hist_row is None:
+            missing_types.append(label)
+            hist_row = {}
+
+        vals = {k: int(hist_row.get(k, 0) or 0) for k in REPORT_COLUMN_KEYS}
+        # OP100 selalu diambil dari upload hari ini (overwrite histori)
+        vals["OP100_PERIKSA"] = int(op100_values.get(label, 0))
+
+        # Override manual kalau user mengedit ulang nilainya hari ini
+        if m["IsManual"] == "TRUE" and label in manual_overrides and manual_overrides[label] not in (None, ""):
+            target_col = m["ManualTargetColumn"]
+            if target_col:
+                vals[target_col] = int(manual_overrides[label])
+
+        grand = sum(vals.get(k, 0) for k in REPORT_COLUMN_KEYS)
+        rec = {"RowLabel": label, "RowGroup": m["RowGroup"], "ISI": m["ISI"],
+               "IsAksesoris": m["IsAksesoris"] == "TRUE", "GrandTotal": grand}
+        rec.update(vals)
+        records.append(rec)
+
+    report_df = pd.DataFrame(records)
+    order_map = {g: i for i, g in enumerate(GROUP_ORDER)}
+    report_df["_order"] = report_df["RowGroup"].map(order_map).fillna(99)
+    report_df = report_df.sort_values(["_order"], kind="stable").drop(columns="_order").reset_index(drop=True)
+    return report_df, missing_types

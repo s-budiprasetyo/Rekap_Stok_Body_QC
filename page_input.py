@@ -147,6 +147,18 @@ def render_page():
     else:
         st.caption("Tidak wajib diisi — kosongkan / biarkan 0 kalau stok tidak ada hari ini.")
 
+    # Catatan penting: key widget number_input di bawah SENGAJA menyertakan mode +
+    # snapshot histori yang dipilih (bukan cuma nama field). Di Streamlit, argumen
+    # `value=` pada widget HANYA dipakai saat widget dgn key itu pertama kali dibuat di
+    # sesi browser ini -- rerun berikutnya akan selalu pakai nilai lama di session_state,
+    # walau default_val yang baru dihitung berbeda. Kalau key-nya cuma "manual_<label>"
+    # (sama terus apapun mode/snapshot-nya), begitu widget itu sempat ter-render SEKALI
+    # dengan nilai 0 (misal waktu histori masih rusak), field itu akan "macet" di 0
+    # selamanya walau histori sudah diperbaiki -- persis masalah CRJP/U104ST yang dilaporkan.
+    # Dengan menambahkan mode+snapshot ke key, ganti snapshot/mode = widget baru = default
+    # yang baru dihitung benar-benar dipakai lagi.
+    history_key_part = history_snapshot["label"] if (use_history and history_snapshot) else "no-history"
+
     manual_values = {}
     cols = st.columns(3)
     for idx, label in enumerate(MANUAL_ROWS):
@@ -156,7 +168,10 @@ def render_page():
             if target_col:
                 default_val = int(history_map[label].get(target_col, 0) or 0)
         with cols[idx % 3]:
-            manual_values[label] = st.number_input(label, min_value=0, value=default_val, step=1, key=f"manual_{label}")
+            manual_values[label] = st.number_input(
+                label, min_value=0, value=default_val, step=1,
+                key=f"manual_{label}__{use_history}__{history_key_part}",
+            )
 
     # ------------------------------------------------------------------
     # 3. Tanggal & Sesi

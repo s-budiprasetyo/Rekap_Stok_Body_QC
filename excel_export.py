@@ -42,15 +42,15 @@ def build_excel(report_df: pd.DataFrame, tanggal_str: str, sesi: str, kota: str 
     ws.cell(1, 1, "PT. SURYA PERTIWI NUSANTARA").font = Font(bold=True, size=12)
     ws.cell(1, 1).alignment = CENTER
 
-    # ---------- Baris 2: "Gresik, tanggal" rata kanan, di ATAS kotak judul+legalisasi ----------
-    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=last_col)
-    gc = ws.cell(2, 1, f"{kota}, {tanggal_str}")
-    gc.font = Font(size=9)
-    gc.alignment = Alignment(horizontal="right", vertical="center")
-
-    # ---------- Kotak gabungan: judul (kiri, 3 baris) + legalisasi (kanan, 3 baris) ----------
-    box_row0 = 3
-    box_row1 = 5  # 3 baris: DIBUAT/.. | blank ttd | INDIRECT/..
+    # ---------- Kotak gabungan menyatu: judul (kiri, 4 baris) + legalisasi (kanan, 4 baris) ----------
+    # baris 1 kanan = "Gresik, tanggal" (1 sel lebar penuh), baris 2 = DIBUAT/DIPERIKSA/DISETUJUI,
+    # baris 3 = blank ttd, baris 4 = INDIRECT/FOREMAN/SUPERVISOR. Judul kiri menyatu penuh 4 baris itu.
+    box_row0 = 2
+    box_row_gresik = box_row0
+    box_row_dibuat = box_row0 + 1
+    box_row_blank = box_row0 + 2
+    box_row_indirect = box_row0 + 3
+    box_row1 = box_row_indirect
 
     title_end_col = max(1, last_col - 6)  # sisakan 6 kolom terakhir untuk 3 grup legalisasi (2 kolom/grup)
     legal_start_col = title_end_col + 1
@@ -64,23 +64,28 @@ def build_excel(report_df: pd.DataFrame, tanggal_str: str, sesi: str, kota: str 
     tc.font = Font(bold=True, size=16)
     tc.alignment = CENTER
 
+    ws.merge_cells(start_row=box_row_gresik, start_column=legal_start_col, end_row=box_row_gresik, end_column=last_col)
+    gc = ws.cell(box_row_gresik, legal_start_col, f"{kota}, {tanggal_str}")
+    gc.font = Font(size=9)
+    gc.alignment = CENTER
+
     col = legal_start_col
     for label, size in zip(["DIBUAT", "DIPERIKSA", "DISETUJUI"], group_sizes):
-        ws.merge_cells(start_row=box_row0, start_column=col, end_row=box_row0, end_column=col + size - 1)
-        c = ws.cell(box_row0, col, label)
+        ws.merge_cells(start_row=box_row_dibuat, start_column=col, end_row=box_row_dibuat, end_column=col + size - 1)
+        c = ws.cell(box_row_dibuat, col, label)
         c.font = Font(bold=True, size=10)
         c.alignment = CENTER
         col += size
 
     col = legal_start_col
     for size in group_sizes:
-        ws.merge_cells(start_row=box_row0 + 1, start_column=col, end_row=box_row0 + 1, end_column=col + size - 1)
+        ws.merge_cells(start_row=box_row_blank, start_column=col, end_row=box_row_blank, end_column=col + size - 1)
         col += size
 
     col = legal_start_col
     for label, size in zip(["INDIRECT", "FOREMAN", "SUPERVISOR"], group_sizes):
-        ws.merge_cells(start_row=box_row1, start_column=col, end_row=box_row1, end_column=col + size - 1)
-        c = ws.cell(box_row1, col, label)
+        ws.merge_cells(start_row=box_row_indirect, start_column=col, end_row=box_row_indirect, end_column=col + size - 1)
+        c = ws.cell(box_row_indirect, col, label)
         c.font = Font(bold=True, size=10)
         c.alignment = CENTER
         col += size

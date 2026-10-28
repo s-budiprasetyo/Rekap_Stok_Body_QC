@@ -4,7 +4,10 @@ Kalau credential belum diisi di st.secrets, semua fungsi di sini
 akan gagal dengan aman (return False) tanpa bikin app crash.
 """
 import datetime
+from zoneinfo import ZoneInfo
 import pandas as pd
+
+WIB = ZoneInfo("Asia/Jakarta")  # WIB (Jakarta/Surabaya, UTC+7) -- dipakai untuk semua timestamp
 
 
 def is_configured(st) -> bool:
@@ -213,7 +216,11 @@ def rename_tab(st, old_name: str, new_name: str) -> tuple[bool, str]:
 
 
 def append_history(st, report_df: pd.DataFrame, tanggal_str: str, sesi: str) -> tuple[bool, str]:
-    """Tambahkan 1 baris per Type ke tab sesuai bulan tanggal_str (dibuat otomatis kalau belum ada)."""
+    """Simpan 1 baris per Type ke tab sesuai bulan tanggal_str (dibuat otomatis kalau belum ada).
+
+    Perilakunya UPSERT: kalau sudah ada baris-baris lama dengan Tanggal+Sesi yang SAMA,
+    baris-baris lama itu dihapus dulu lalu diganti baris baru -- bukan ditambahkan di
+    bawahnya (supaya histori per tanggal+sesi tidak pernah dobel/konflik)."""
     if not is_configured(st):
         return False, "Google Sheets belum dikonfigurasi (lihat Secrets)."
     try:
@@ -226,13 +233,33 @@ def append_history(st, report_df: pd.DataFrame, tanggal_str: str, sesi: str) -> 
             ws = sh.add_worksheet(title=tab_name, rows=1000, cols=20)
         _ensure_header(ws)
 
-        now = datetime.datetime.now().isoformat(timespec="seconds")
-        rows_to_add = []
+        existing = ws.get_all_values()
+        header = existing[0] if existing else HEADER_ROW
+        kept_rows = []
+        removed_count = 0
+        for row in existing[1:]:
+            row_tanggal = row[1] if len(row) > 1 else ""
+            row_sesi = row[2] if len(row) > 2 else ""
+            if row_tanggal == tanggal_str and row_sesi == sesi:
+                removed_count += 1
+                continue
+            kept_rows.append(row)
+
+        now = datetime.datetime.now(WIB).isoformat(timespec="seconds")
+        new_rows = []
         for _, r in report_df.iterrows():
             row = [now, tanggal_str, sesi, r["RowLabel"], r["RowGroup"]] + \
                   [int(r.get(c, 0) or 0) for c in DATA_COLS] + [int(r["GrandTotal"])]
-            rows_to_add.append(row)
-        ws.append_rows(rows_to_add, value_input_option="USER_ENTERED")
-        return True, f"{len(rows_to_add)} baris tersimpan ke tab '{tab_name}'."
+            new_rows.append(row)
+
+        all_rows = [header] + kept_rows + new_rows
+        ws.clear()
+        ws.update(values=all_rows, value_input_option="USER_ENTERED")
+
+        msg = f"{len(new_rows)} baris tersimpan ke tab '{tab_name}'"
+        if removed_count:
+            msg += f" (menimpa {removed_count} baris lama untuk {tanggal_str} / {sesi})"
+        msg += "."
+        return True, msg
     except Exception as e:
         return False, f"Gagal menyimpan ke Google Sheets: {e}"

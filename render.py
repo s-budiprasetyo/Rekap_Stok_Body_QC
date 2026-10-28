@@ -102,6 +102,7 @@ LEGAL_ROW_H = 22
 LEGAL_SIGN_H = 42
 COMPANY_LINE_H = 26
 TANGGAL_LINE_H = 28
+GRESIK_LINE_H = 20
 
 
 def render_report(report_df: pd.DataFrame, tanggal_str: str, sesi: str = "PAGI", kota: str = "Gresik") -> Image.Image:
@@ -109,9 +110,13 @@ def render_report(report_df: pd.DataFrame, tanggal_str: str, sesi: str = "PAGI",
     table_w = COL_W_NO + COL_W_TYPE + COL_W_ISI + n_data_cols * COL_W_DATA + COL_W_TOTAL
     img_w = table_w + 2 * MARGIN
 
-    legal_box_h = LEGAL_ROW_H + LEGAL_ROW_H + LEGAL_SIGN_H + LEGAL_ROW_H
+    # Kotak gabungan (judul + legalisasi) -- 3 baris: DIBUAT/DIPERIKSA/DISETUJUI,
+    # baris kosong tanda tangan, INDIRECT/FOREMAN/SUPERVISOR. "Gresik, tanggal" sekarang
+    # ditulis DI ATAS kotak (rata kanan), bukan jadi baris di dalam kotak -- sesuai
+    # contoh template manual.
+    legal_box_h = LEGAL_ROW_H + LEGAL_SIGN_H + LEGAL_ROW_H
     title_block_h = legal_box_h
-    top_h = COMPANY_LINE_H + title_block_h + TANGGAL_LINE_H
+    top_h = COMPANY_LINE_H + GRESIK_LINE_H + title_block_h + TANGGAL_LINE_H
 
     groups = [g for g in engine.GROUP_ORDER if g in report_df["RowGroup"].unique()]
     n_rows = len(report_df)
@@ -137,16 +142,24 @@ def render_report(report_df: pd.DataFrame, tanggal_str: str, sesi: str = "PAGI",
     _text_center(d, (MARGIN, y, MARGIN + table_w, y + COMPANY_LINE_H), "PT. SURYA PERTIWI NUSANTARA", f_sub)
     y += COMPANY_LINE_H
 
-    # ---------- Kotak legalisasi (kanan) ----------
+    # ---------- "Gresik, tanggal" DI ATAS kotak, rata kanan ----------
     legal_x0 = MARGIN + table_w - LEGAL_BOX_W
-    legal_y0 = y
     col_w3 = LEGAL_BOX_W / 3
 
-    d.rectangle([legal_x0, legal_y0, legal_x0 + LEGAL_BOX_W, legal_y0 + LEGAL_ROW_H], outline=GRID)
-    _text_center(d, (legal_x0, legal_y0, legal_x0 + LEGAL_BOX_W, legal_y0 + LEGAL_ROW_H),
-                 f"{kota}, {tanggal_str}", f_legal_sm)
+    gresik_text = f"{kota}, {tanggal_str}"
+    gw = d.textlength(gresik_text, font=f_legal_sm)
+    d.text((legal_x0 + LEGAL_BOX_W - gw, y), gresik_text, font=f_legal_sm, fill=BLACK)
+    y += GRESIK_LINE_H
 
-    y2 = legal_y0 + LEGAL_ROW_H
+    # ---------- Kotak gabungan: judul (kiri, penuh tinggi) + legalisasi (kanan, 3 baris) ----------
+    box_y0 = y
+    title_area_x1 = legal_x0
+
+    d.rectangle([MARGIN, box_y0, legal_x0 + LEGAL_BOX_W, box_y0 + legal_box_h], outline=GRID, width=2)
+    d.line([(title_area_x1, box_y0), (title_area_x1, box_y0 + legal_box_h)], fill=GRID, width=2)
+    _text_center(d, (MARGIN, box_y0, title_area_x1, box_y0 + legal_box_h), "STOK BODY HARIAN QC TK", f_title)
+
+    y2 = box_y0
     for i, label in enumerate(["DIBUAT", "DIPERIKSA", "DISETUJUI"]):
         x0 = legal_x0 + i * col_w3
         d.rectangle([x0, y2, x0 + col_w3, y2 + LEGAL_ROW_H], outline=GRID)
@@ -163,14 +176,8 @@ def render_report(report_df: pd.DataFrame, tanggal_str: str, sesi: str = "PAGI",
         d.rectangle([x0, y4, x0 + col_w3, y4 + LEGAL_ROW_H], outline=GRID)
         _text_center(d, (x0, y4, x0 + col_w3, y4 + LEGAL_ROW_H), label, f_legal)
 
-    # ---------- Judul, di dalam kotak, center di area kiri (sebelah tabel legalisasi) ----------
-    title_area_x1 = legal_x0
-    title_pad = 8
-    d.rectangle([MARGIN + title_pad, legal_y0 + title_pad, title_area_x1 - title_pad, legal_y0 + legal_box_h - title_pad], outline=GRID, width=2)
-    _text_center(d, (MARGIN, legal_y0, title_area_x1, legal_y0 + legal_box_h), "STOK BODY HARIAN QC TK", f_title)
-
     # ---------- Baris TANGGAL ----------
-    y = legal_y0 + legal_box_h
+    y = box_y0 + legal_box_h
     d.text((MARGIN, y + 6), f"TANGGAL : {tanggal_str}  ( {sesi} )", font=f_sub, fill=BLACK)
     y += TANGGAL_LINE_H
 

@@ -29,7 +29,7 @@ DISPLAY_COLS = [
 ]
 
 
-def build_excel(report_df: pd.DataFrame, tanggal_str: str, sesi: str) -> bytes:
+def build_excel(report_df: pd.DataFrame, tanggal_str: str, sesi: str, kota: str = "Gresik") -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Stok Body Harian QC"
@@ -37,15 +37,65 @@ def build_excel(report_df: pd.DataFrame, tanggal_str: str, sesi: str) -> bytes:
     n_data = len(DISPLAY_COLS)
     last_col = 3 + n_data + 1  # No, Type, ISI + data cols + GrandTotal
 
+    # ---------- Baris 1: nama perusahaan ----------
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_col)
     ws.cell(1, 1, "PT. SURYA PERTIWI NUSANTARA").font = Font(bold=True, size=12)
-    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=last_col)
-    ws.cell(2, 1, "STOK BODY HARIAN QC TK").font = Font(bold=True, size=16)
-    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=last_col)
-    ws.cell(3, 1, f"TANGGAL : {tanggal_str} ( {sesi} )").font = Font(bold=True, size=11)
+    ws.cell(1, 1).alignment = CENTER
 
-    header_row1 = 5
-    header_row2 = 6
+    # ---------- Baris 2: "Gresik, tanggal" rata kanan, di ATAS kotak judul+legalisasi ----------
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=last_col)
+    gc = ws.cell(2, 1, f"{kota}, {tanggal_str}")
+    gc.font = Font(size=9)
+    gc.alignment = Alignment(horizontal="right", vertical="center")
+
+    # ---------- Kotak gabungan: judul (kiri, 3 baris) + legalisasi (kanan, 3 baris) ----------
+    box_row0 = 3
+    box_row1 = 5  # 3 baris: DIBUAT/.. | blank ttd | INDIRECT/..
+
+    title_end_col = max(1, last_col - 6)  # sisakan 6 kolom terakhir untuk 3 grup legalisasi (2 kolom/grup)
+    legal_start_col = title_end_col + 1
+    legal_cols = last_col - title_end_col
+    base = legal_cols // 3
+    rem = legal_cols % 3
+    group_sizes = [base + (1 if i < rem else 0) for i in range(3)]
+
+    ws.merge_cells(start_row=box_row0, start_column=1, end_row=box_row1, end_column=title_end_col)
+    tc = ws.cell(box_row0, 1, "STOK BODY HARIAN QC TK")
+    tc.font = Font(bold=True, size=16)
+    tc.alignment = CENTER
+
+    col = legal_start_col
+    for label, size in zip(["DIBUAT", "DIPERIKSA", "DISETUJUI"], group_sizes):
+        ws.merge_cells(start_row=box_row0, start_column=col, end_row=box_row0, end_column=col + size - 1)
+        c = ws.cell(box_row0, col, label)
+        c.font = Font(bold=True, size=10)
+        c.alignment = CENTER
+        col += size
+
+    col = legal_start_col
+    for size in group_sizes:
+        ws.merge_cells(start_row=box_row0 + 1, start_column=col, end_row=box_row0 + 1, end_column=col + size - 1)
+        col += size
+
+    col = legal_start_col
+    for label, size in zip(["INDIRECT", "FOREMAN", "SUPERVISOR"], group_sizes):
+        ws.merge_cells(start_row=box_row1, start_column=col, end_row=box_row1, end_column=col + size - 1)
+        c = ws.cell(box_row1, col, label)
+        c.font = Font(bold=True, size=10)
+        c.alignment = CENTER
+        col += size
+
+    for r in range(box_row0, box_row1 + 1):
+        for c in range(1, last_col + 1):
+            ws.cell(r, c).border = BORDER
+
+    # ---------- Baris TANGGAL ----------
+    tanggal_row = box_row1 + 1
+    ws.merge_cells(start_row=tanggal_row, start_column=1, end_row=tanggal_row, end_column=last_col)
+    ws.cell(tanggal_row, 1, f"TANGGAL : {tanggal_str} ( {sesi} )").font = Font(bold=True, size=11)
+
+    header_row1 = tanggal_row + 2
+    header_row2 = header_row1 + 1
 
     ws.merge_cells(start_row=header_row1, start_column=1, end_row=header_row2, end_column=1)
     ws.cell(header_row1, 1, "NO")

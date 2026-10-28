@@ -229,12 +229,20 @@ def render_page():
     with col2:
         sesi = st.selectbox("Sesi", ["PAGI", "SORE"])
 
-    # ------------------------------------------------------------------
-    # 4. Generate
-    # ------------------------------------------------------------------
+    # 4. Generate (fragment, lihat _generate_section)
+    _generate_section(grouped, op100_only_file is not None, use_history, history_map,
+                      master_df, manual_values, tanggal_str, sesi, gsheets_ready)
+
+
+@st.fragment
+def _generate_section(grouped, op100_uploaded, use_history, history_map,
+                      master_df, manual_values, tanggal_str, sesi, gsheets_ready):
+    """Bagian 4 (Generate + hasil + tombol download) dibungkus st.fragment: klik Generate /
+    Download / Ya-Tidak hanya me-rerun fragmen ini, BUKAN seluruh halaman (upload, input manual,
+    dst) -- inilah yang mengurangi kedipan layar."""
     st.header("4️⃣ Generate Laporan")
 
-    can_generate = (not grouped.empty) if not use_history else (op100_only_file is not None)
+    can_generate = (not grouped.empty) if not use_history else (op100_uploaded)
 
     if st.button("🖼️ Generate", type="primary", disabled=not can_generate):
         if use_history:

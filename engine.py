@@ -307,3 +307,36 @@ def build_report_table_from_history(master_df: pd.DataFrame, history_map: dict,
     report_df["_order"] = report_df["RowGroup"].map(order_map).fillna(99)
     report_df = report_df.sort_values(["_order"], kind="stable").drop(columns="_order").reset_index(drop=True)
     return report_df, missing_types
+
+
+def build_report_table_from_snapshot(master_df: pd.DataFrame, history_map: dict):
+    """
+    Bangun ulang report_df APA ADANYA dari 1 snapshot histori Google Sheets (semua kolom,
+    termasuk OP100, diambil dari histori -- tidak ada overwrite/override apapun).
+    Dipakai oleh fitur 'Ambil Data' untuk me-render ulang gambar laporan yang sudah pernah
+    di-generate & tersimpan otomatis.
+
+    Return: report_df, missing_types (list RowLabel yang tidak ada di snapshot, diisi 0)
+    """
+    records = []
+    missing_types = []
+
+    for _, m in master_df.iterrows():
+        label = m["RowLabel"]
+        hist_row = history_map.get(label)
+        if hist_row is None:
+            missing_types.append(label)
+            hist_row = {}
+
+        vals = {k: int(hist_row.get(k, 0) or 0) for k in REPORT_COLUMN_KEYS}
+        grand = sum(vals.values())
+        rec = {"RowLabel": label, "RowGroup": m["RowGroup"], "ISI": m["ISI"],
+               "IsAksesoris": m["IsAksesoris"] == "TRUE", "GrandTotal": grand}
+        rec.update(vals)
+        records.append(rec)
+
+    report_df = pd.DataFrame(records)
+    order_map = {g: i for i, g in enumerate(GROUP_ORDER)}
+    report_df["_order"] = report_df["RowGroup"].map(order_map).fillna(99)
+    report_df = report_df.sort_values(["_order"], kind="stable").drop(columns="_order").reset_index(drop=True)
+    return report_df, missing_types

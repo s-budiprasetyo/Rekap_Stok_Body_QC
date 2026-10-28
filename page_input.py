@@ -7,7 +7,11 @@ import engine
 import render
 import excel_export
 import gsheets
-import gdrive
+
+# Simpan otomatis ke Histori Google Sheets SEMENTARA DIMATIKAN (atas permintaan Anda,
+# 28 Okt 2026) selama masa testing, karena ada data histori yang ternyata tidak sesuai
+# harapan. Ubah jadi True kapan pun sudah yakin aman untuk dinyalakan lagi.
+AUTO_SAVE_HISTORI = False
 
 
 def _render_checklist(report: dict):
@@ -187,12 +191,24 @@ def render_page():
         st.session_state["report_df"] = report_df
         st.session_state["tanggal_str"] = tanggal_str
         st.session_state["sesi"] = sesi
+        st.session_state.pop("auto_save_msg", None)
 
-        # Simpan otomatis Excel ke Google Drive begitu Generate selesai (point 5) —
-        # dipakai nanti oleh halaman "Ambil Data" untuk render ulang gambarnya.
-        xlsx_bytes_auto = excel_export.build_excel(report_df, tanggal_str, sesi)
-        ok_drive, msg_drive = gdrive.upload_excel(st, xlsx_bytes_auto, tanggal_str, sesi)
-        st.session_state["drive_save_msg"] = (ok_drive, msg_drive)
+        # Simpan otomatis ke histori Google Sheets begitu Generate selesai (point 5) —
+        # SEMENTARA DIMATIKAN (AUTO_SAVE_HISTORI = False) atas permintaan Anda selama masa
+        # testing, supaya data di tab Histori Google Sheets tidak ikut berubah/bertambah
+        # tanpa sengaja saat sedang coba-coba. Pakai tombol "Simpan ke Histori" manual di
+        # bawah kalau memang mau menyimpan. Nyalakan lagi dengan ubah AUTO_SAVE_HISTORI
+        # jadi True kalau fitur 'Ambil Data' sudah dipastikan aman.
+        if AUTO_SAVE_HISTORI:
+            if gsheets_ready:
+                ok_save, msg_save = gsheets.append_history(st, report_df, tanggal_str, sesi)
+                st.session_state["auto_save_msg"] = (ok_save, f"☁️ Tersimpan otomatis — {msg_save}" if ok_save else msg_save)
+            else:
+                st.session_state["auto_save_msg"] = (
+                    False,
+                    "Google Sheets belum dikonfigurasi — laporan ini TIDAK tersimpan otomatis, "
+                    "jadi belum bisa diambil lagi lewat halaman 'Ambil Data'.",
+                )
 
     if not can_generate:
         st.info("⬆️ Upload file yang diperlukan dulu di Langkah 1.")
@@ -202,9 +218,9 @@ def render_page():
         unmatched_df = st.session_state.get("unmatched_df", pd.DataFrame())
         missing_types = st.session_state.get("missing_types", [])
 
-        if "drive_save_msg" in st.session_state:
-            ok_drive, msg_drive = st.session_state["drive_save_msg"]
-            (st.caption if ok_drive else st.warning)(msg_drive)
+        if "auto_save_msg" in st.session_state:
+            ok_save, msg_save = st.session_state["auto_save_msg"]
+            (st.caption if ok_save else st.warning)(msg_save)
 
         if not unmatched_df.empty:
             with st.expander(f"⚠️ {len(unmatched_df)} baris data SAP TIDAK cocok ke master (cek Type/Warna/Kode Pabrik/Forming)"):

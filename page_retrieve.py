@@ -1,26 +1,30 @@
 import io
 import streamlit as st
 
+import common
 import engine
 import render
 import excel_export
-import gdrive
+import gsheets
 
 
 def render_page():
     st.title("📂 Ambil Data")
     st.caption(
-        "Pilih tanggal & sesi, aplikasi akan membaca ulang file Excel yang tersimpan "
-        "otomatis di Google Drive (setiap kali Anda klik Generate di halaman Input), "
-        "lalu me-render ulang gambar laporannya."
+        "Pilih tanggal & sesi, aplikasi akan mengolah ulang data yang tersimpan otomatis "
+        "di Google Sheets (setiap kali Generate di halaman Input Harian berhasil), lalu "
+        "me-render ulang gambar laporannya."
     )
 
-    if not gdrive.is_configured(st):
+    gsheets_ready = common.gsheets_ready()
+    if not gsheets_ready:
         st.warning(
-            "Google Drive belum dikonfigurasi — fitur ini belum bisa dipakai. "
-            "Butuh secret `gcp_service_account` yang sama seperti untuk Google Sheets."
+            "Google Sheets belum dikonfigurasi — fitur ini belum bisa dipakai. "
+            "Butuh secret `gcp_service_account` dan `gsheet_name` (lihat README)."
         )
         return
+
+    master_df, _ = common.get_master_and_manual_rows()
 
     col1, col2 = st.columns(2)
     with col1:
@@ -29,29 +33,32 @@ def render_page():
         sesi = st.selectbox("Sesi", ["PAGI", "SORE"], key="ambil_sesi")
 
     if st.button("🔍 Ambil Gambar", type="primary"):
-        with st.spinner("Mencari & memuat data dari Google Drive..."):
-            file_info = gdrive.find_latest_file(st, tanggal_str, sesi)
-            if not file_info:
+        with st.spinner("Mencari & memuat data..."):
+            history_map = gsheets.fetch_history_snapshot(st, tanggal_str, sesi)
+            if not history_map:
                 st.session_state.pop("ambil_img_bytes", None)
-                st.error(f"Tidak ditemukan laporan tersimpan untuk **{tanggal_str} ({sesi})**.")
+                st.error(
+                    f"Tidak ditemukan laporan tersimpan untuk **{tanggal_str} ({sesi})**. "
+                    "Pastikan laporan untuk tanggal & sesi itu sudah pernah di-Generate di "
+                    "halaman Input Harian (tersimpan otomatis sejak fitur ini aktif)."
+                )
             else:
-                try:
-                    xlsx_bytes = gdrive.download_file(st, file_info["id"])
-                    report_df = excel_export.read_report_df(xlsx_bytes)
-                    img = render.render_report(report_df, tanggal_str, sesi)
-                    buf = io.BytesIO()
-                    img.save(buf, format="PNG")
-                    st.session_state["ambil_img_bytes"] = buf.getvalue()
-                    st.session_state["ambil_xlsx_bytes"] = xlsx_bytes
-                    st.session_state["ambil_file_name"] = file_info["name"]
-                    st.session_state["ambil_tanggal_res"] = tanggal_str
-                    st.session_state["ambil_sesi_res"] = sesi
-                except Exception as e:
-                    st.session_state.pop("ambil_img_bytes", None)
-                    st.error(f"Gagal memuat/merender data: {e}")
+                report_df, missing_types = engine.build_report_table_from_snapshot(master_df, history_map)
+                img = render.render_report(report_df, tanggal_str, sesi)
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                st.session_state["ambil_img_bytes"] = buf.getvalue()
+                st.session_state["ambil_report_df"] = report_df
+                st.session_state["ambil_missing_types"] = missing_types
+                st.session_state["ambil_tanggal_res"] = tanggal_str
+                st.session_state["ambil_sesi_res"] = sesi
 
     if "ambil_img_bytes" in st.session_state:
-        st.success(f"Dimuat dari file: `{st.session_state['ambil_file_name']}`")
+        missing_types = st.session_state.get("ambil_missing_types", [])
+        if missing_types:
+            with st.expander(f"⚠️ {len(missing_types)} Type tidak ada di histori tersimpan (diisi 0)"):
+                st.write(missing_types)
+
         st.image(
             st.session_state["ambil_img_bytes"],
             caption=f"{st.session_state['ambil_tanggal_res']} ({st.session_state['ambil_sesi_res']})",
@@ -67,8 +74,16 @@ def render_page():
                 mime="image/png",
             )
         with colB:
+            xlsx_bytes = excel_export.build_excel(
+                st.session_state["ambil_report_df"],
+                st.session_state["ambil_tanggal_res"],
+                st.session_state["ambil_sesi_res"],
+            )
             st.download_button(
-                "⬇️ Download Excel", data=st.session_state["ambil_xlsx_bytes"],
-                file_name=st.session_state["ambil_file_name"],
+                "⬇️ Download Excel", data=xlsx_bytes,
+                file_name=(
+                    f"Stok_Body_{st.session_state['ambil_tanggal_res'].replace(' ', '_')}_"
+                    f"{st.session_state['ambil_sesi_res']}.xlsx"
+                ),
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             )

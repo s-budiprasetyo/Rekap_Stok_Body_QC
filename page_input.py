@@ -1,17 +1,63 @@
-import io
+import base64
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 
 import common
 import engine
-import render
-import excel_export
 import gsheets
 
-# Simpan otomatis ke Histori Google Sheets SEMENTARA DIMATIKAN (atas permintaan Anda,
-# 28 Okt 2026) selama masa testing, karena ada data histori yang ternyata tidak sesuai
-# harapan. Ubah jadi True kapan pun sudah yakin aman untuk dinyalakan lagi.
+# Simpan otomatis ke Histori Google Sheets setiap kali Generate berhasil -- DIMATIKAN lagi
+# (29 Okt 2026) atas permintaan Anda: simpan-otomatis tanpa konfirmasi dirasa kurang aman
+# kalau aplikasi dipakai orang lain yang perilakunya di luar prediksi. Sebagai gantinya,
+# konfirmasi simpan sekarang muncul sebagai dialog tiap kali tombol Download diklik (lihat
+# _confirm_save_and_download di bawah) -- jadi keputusan simpan selalu eksplisit per unduhan.
 AUTO_SAVE_HISTORI = False
+
+
+def _trigger_browser_download(data: bytes, filename: str, mime: str):
+    """Memicu unduhan file browser secara otomatis (tanpa klik tombol native kedua) lewat
+    link <a download> yang di-klik otomatis via JS, dibungkus di iframe komponen Streamlit.
+    Ini trik yang umum dipakai krn Streamlit sendiri tidak punya cara memicu unduhan murni
+    dari kode server. CATATAN: beberapa browser/pengaturan keamanan bisa saja memblokir
+    auto-klik di dalam iframe -- makanya tombol unduh manual tetap ditampilkan sebagai
+    cadangan tepat di bawahnya, supaya file tidak pernah "hilang begitu saja" kalau trik
+    ini gagal jalan."""
+    b64 = base64.b64encode(data).decode()
+    html = f"""
+    <html><body>
+    <a id="auto-dl-link" href="data:{mime};base64,{b64}" download="{filename}" style="display:none"></a>
+    <script>document.getElementById('auto-dl-link').click();</script>
+    </body></html>
+    """
+    components.html(html, height=0, width=0)
+
+
+@st.dialog("Simpan sebagai histori?")
+def _confirm_save_and_download(data_bytes: bytes, filename: str, mime: str,
+                                report_df: pd.DataFrame, tanggal_str: str, sesi: str,
+                                gsheets_ready: bool):
+    st.write(f"Simpan laporan **{tanggal_str} ({sesi})** ini ke histori Stok Body (Google Sheets) juga?")
+    col1, col2 = st.columns(2)
+    choice = None
+    with col1:
+        if st.button("✅ Ya, simpan", use_container_width=True, type="primary"):
+            choice = True
+    with col2:
+        if st.button("❌ Tidak, download saja", use_container_width=True):
+            choice = False
+
+    if choice is not None:
+        if choice:
+            if gsheets_ready:
+                ok, msg = gsheets.append_history(st, report_df, tanggal_str, sesi)
+                (st.success if ok else st.error)(msg)
+            else:
+                st.warning("Google Sheets belum dikonfigurasi — tidak bisa disimpan.")
+        _trigger_browser_download(data_bytes, filename, mime)
+        st.caption("Unduhan dimulai otomatis. Kalau tidak jalan, klik tombol di bawah ini:")
+        st.download_button("⬇️ Download sekarang", data=data_bytes, file_name=filename, mime=mime,
+                            use_container_width=True)
 
 
 def _render_checklist(report: dict):
@@ -208,22 +254,9 @@ def render_page():
         st.session_state["sesi"] = sesi
         st.session_state.pop("auto_save_msg", None)
 
-        # Simpan otomatis ke histori Google Sheets begitu Generate selesai (point 5) —
-        # SEMENTARA DIMATIKAN (AUTO_SAVE_HISTORI = False) atas permintaan Anda selama masa
-        # testing, supaya data di tab Histori Google Sheets tidak ikut berubah/bertambah
-        # tanpa sengaja saat sedang coba-coba. Pakai tombol "Simpan ke Histori" manual di
-        # bawah kalau memang mau menyimpan. Nyalakan lagi dengan ubah AUTO_SAVE_HISTORI
-        # jadi True kalau fitur 'Ambil Data' sudah dipastikan aman.
-        if AUTO_SAVE_HISTORI:
-            if gsheets_ready:
-                ok_save, msg_save = gsheets.append_history(st, report_df, tanggal_str, sesi)
-                st.session_state["auto_save_msg"] = (ok_save, f"☁️ Tersimpan otomatis — {msg_save}" if ok_save else msg_save)
-            else:
-                st.session_state["auto_save_msg"] = (
-                    False,
-                    "Google Sheets belum dikonfigurasi — laporan ini TIDAK tersimpan otomatis, "
-                    "jadi belum bisa diambil lagi lewat halaman 'Ambil Data'.",
-                )
+        # Catatan: tidak ada simpan-otomatis di sini lagi. Simpan ke histori sekarang
+        # ditanyakan lewat dialog konfirmasi tiap kali tombol Download (PNG/Excel) di
+        # bawah diklik -- lihat _confirm_save_and_download di atas.
 
     if not can_generate:
         st.info("⬆️ Upload file yang diperlukan dulu di Langkah 1.")
@@ -245,29 +278,33 @@ def render_page():
             with st.expander(f"⚠️ {len(missing_types)} Type tidak ditemukan di histori yang dipilih (diisi 0 untuk kolom selain OP100)"):
                 st.write(missing_types)
 
-        img = render.render_report(report_df, st.session_state["tanggal_str"], st.session_state["sesi"])
-        buf = io.BytesIO()
-        img.save(buf, format="PNG")
-        st.image(buf.getvalue(), caption="Preview Laporan")
+        tanggal_cur = st.session_state["tanggal_str"]
+        sesi_cur = st.session_state["sesi"]
+        png_bytes = common.cached_render_png(report_df, tanggal_cur, sesi_cur)
+        xlsx_bytes = common.cached_build_excel(report_df, tanggal_cur, sesi_cur)
+        st.image(png_bytes, caption="Preview Laporan")
+
+        png_filename = f"Stok_Body_{tanggal_cur.replace(' ', '_')}_{sesi_cur}.png"
+        xlsx_filename = f"Stok_Body_{tanggal_cur.replace(' ', '_')}_{sesi_cur}.xlsx"
 
         colA, colB, colC = st.columns(3)
         with colA:
-            st.download_button(
-                "⬇️ Download Gambar (PNG)", data=buf.getvalue(),
-                file_name=f"Stok_Body_{st.session_state['tanggal_str'].replace(' ', '_')}_{st.session_state['sesi']}.png",
-                mime="image/png",
-            )
+            if st.button("⬇️ Download Gambar (PNG)", use_container_width=True):
+                _confirm_save_and_download(
+                    png_bytes, png_filename, "image/png",
+                    report_df, tanggal_cur, sesi_cur, gsheets_ready,
+                )
         with colB:
-            xlsx_bytes = excel_export.build_excel(report_df, st.session_state["tanggal_str"], st.session_state["sesi"])
-            st.download_button(
-                "⬇️ Jadikan Excel", data=xlsx_bytes,
-                file_name=f"Stok_Body_{st.session_state['tanggal_str'].replace(' ', '_')}_{st.session_state['sesi']}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            )
+            if st.button("⬇️ Jadikan Excel", use_container_width=True):
+                _confirm_save_and_download(
+                    xlsx_bytes, xlsx_filename,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    report_df, tanggal_cur, sesi_cur, gsheets_ready,
+                )
         with colC:
             if gsheets_ready:
-                if st.button("☁️ Simpan ke Histori (Google Sheets)"):
-                    ok, msg = gsheets.append_history(st, report_df, st.session_state["tanggal_str"], st.session_state["sesi"])
+                if st.button("☁️ Simpan ke Histori saja (tanpa download)", use_container_width=True):
+                    ok, msg = gsheets.append_history(st, report_df, tanggal_cur, sesi_cur)
                     (st.success if ok else st.error)(msg)
             else:
                 st.caption("Histori Google Sheets belum dikonfigurasi (opsional, lihat README).")

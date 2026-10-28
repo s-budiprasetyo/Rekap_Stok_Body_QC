@@ -1,10 +1,7 @@
-import io
 import streamlit as st
 
 import common
 import engine
-import render
-import excel_export
 import gsheets
 
 
@@ -44,10 +41,7 @@ def render_page():
                 )
             else:
                 report_df, missing_types = engine.build_report_table_from_snapshot(master_df, history_map)
-                img = render.render_report(report_df, tanggal_str, sesi)
-                buf = io.BytesIO()
-                img.save(buf, format="PNG")
-                st.session_state["ambil_img_bytes"] = buf.getvalue()
+                st.session_state["ambil_img_bytes"] = common.cached_render_png(report_df, tanggal_str, sesi)
                 st.session_state["ambil_report_df"] = report_df
                 st.session_state["ambil_missing_types"] = missing_types
                 st.session_state["ambil_tanggal_res"] = tanggal_str
@@ -74,7 +68,7 @@ def render_page():
                 mime="image/png",
             )
         with colB:
-            xlsx_bytes = excel_export.build_excel(
+            xlsx_bytes = common.cached_build_excel(
                 st.session_state["ambil_report_df"],
                 st.session_state["ambil_tanggal_res"],
                 st.session_state["ambil_sesi_res"],

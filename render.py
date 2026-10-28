@@ -160,8 +160,9 @@ def render_report(report_df: pd.DataFrame, tanggal_str: str, sesi: str = "PAGI",
 
     # garis atas kotak (penuh lebar: judul + legalisasi)
     d.line([(MARGIN, box_y0), (legal_x0 + LEGAL_BOX_W, box_y0)], fill=GRID, width=2)
-    # garis kanan kotak (hanya setinggi kotak)
-    d.line([(legal_x0 + LEGAL_BOX_W, box_y0), (legal_x0 + LEGAL_BOX_W, box_y0 + legal_box_h)], fill=GRID, width=2)
+    # garis kanan kotak -- diteruskan terus ke bawah sampai ke tepi kanan tabel data (sejajar,
+    # karena legal_x0 + LEGAL_BOX_W == MARGIN + table_w), supaya menyambung dgn kolom GRAND TOTAL
+    d.line([(legal_x0 + LEGAL_BOX_W, box_y0), (legal_x0 + LEGAL_BOX_W, header1_y0)], fill=GRID, width=2)
     # garis kiri kotak -- diteruskan terus ke bawah sampai ke tabel data (TANPA putus di baris TANGGAL)
     d.line([(MARGIN, box_y0), (MARGIN, header1_y0)], fill=GRID, width=2)
 

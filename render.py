@@ -142,20 +142,39 @@ def render_report(report_df: pd.DataFrame, tanggal_str: str, sesi: str = "PAGI",
     _text_center(d, (MARGIN, y, MARGIN + table_w, y + COMPANY_LINE_H), "PT. SURYA PERTIWI NUSANTARA", f_sub)
     y += COMPANY_LINE_H
 
-    # ---------- Kotak gabungan menyatu: judul (kiri, penuh tinggi kotak) + legalisasi (kanan, 4 baris) ----------
+    # ---------- Kotak gabungan: judul (kiri) + legalisasi (kanan, 4 baris) ----------
+    # Catatan desain (sesuai revisi):
+    # - Baris "Gresik, tanggal" rata KIRI, tepat di atas kolom DIBUAT, TANPA garis vertikal
+    #   di kirinya (garis pemisah judul|legalisasi baru mulai dari baris DIBUAT ke bawah).
+    # - Kotak TIDAK ditutup garis horizontal di bagian bawah (area judul) -- supaya baris
+    #   TANGGAL tidak punya garis horizontal di atasnya. INDIRECT/FOREMAN/SUPERVISOR tetap
+    #   dalam kotak masing-masing (garis bawahnya datang dari sel baris itu sendiri).
+    # - Garis vertikal kiri kotak (x = MARGIN) diteruskan ke bawah sampai menyambung ke
+    #   garis tepi tabel data di bawahnya (tidak putus di baris TANGGAL).
     legal_x0 = MARGIN + table_w - LEGAL_BOX_W
     col_w3 = LEGAL_BOX_W / 3
     box_y0 = y
     title_area_x1 = legal_x0
 
-    d.rectangle([MARGIN, box_y0, legal_x0 + LEGAL_BOX_W, box_y0 + legal_box_h], outline=GRID, width=2)
-    d.line([(title_area_x1, box_y0), (title_area_x1, box_y0 + legal_box_h)], fill=GRID, width=2)
+    header1_y0 = MARGIN + top_h  # posisi atas tabel data, dihitung lebih dulu utk garis kiri yg diteruskan
+
+    # garis atas kotak (penuh lebar: judul + legalisasi)
+    d.line([(MARGIN, box_y0), (legal_x0 + LEGAL_BOX_W, box_y0)], fill=GRID, width=2)
+    # garis kanan kotak (hanya setinggi kotak)
+    d.line([(legal_x0 + LEGAL_BOX_W, box_y0), (legal_x0 + LEGAL_BOX_W, box_y0 + legal_box_h)], fill=GRID, width=2)
+    # garis kiri kotak -- diteruskan terus ke bawah sampai ke tabel data (TANPA putus di baris TANGGAL)
+    d.line([(MARGIN, box_y0), (MARGIN, header1_y0)], fill=GRID, width=2)
+
     _text_center(d, (MARGIN, box_y0, title_area_x1, box_y0 + legal_box_h), "STOK BODY HARIAN QC TK", f_title)
 
-    # baris "Gresik, tanggal" -- satu sel, lebar penuh kolom kanan
+    # baris "Gresik, tanggal" -- satu sel lebar penuh kolom kanan, rata KIRI, tanpa garis kiri
     y1 = box_y0
-    d.rectangle([legal_x0, y1, legal_x0 + LEGAL_BOX_W, y1 + LEGAL_ROW_H], outline=GRID)
-    _text_center(d, (legal_x0, y1, legal_x0 + LEGAL_BOX_W, y1 + LEGAL_ROW_H), f"{kota}, {tanggal_str}", f_legal_sm)
+    d.line([(legal_x0 + LEGAL_BOX_W, y1), (legal_x0 + LEGAL_BOX_W, y1 + LEGAL_ROW_H)], fill=GRID)
+    d.line([(legal_x0, y1 + LEGAL_ROW_H), (legal_x0 + LEGAL_BOX_W, y1 + LEGAL_ROW_H)], fill=GRID)
+    d.text((legal_x0 + 6, y1 + (LEGAL_ROW_H - f_legal_sm.size) / 2 - 2), f"{kota}, {tanggal_str}", font=f_legal_sm, fill=BLACK)
+
+    # garis pemisah judul | legalisasi -- MULAI dari baris DIBUAT (bukan dari baris Gresik)
+    d.line([(title_area_x1, y1 + LEGAL_ROW_H), (title_area_x1, box_y0 + legal_box_h)], fill=GRID, width=2)
 
     y2 = y1 + LEGAL_ROW_H
     for i, label in enumerate(["DIBUAT", "DIPERIKSA", "DISETUJUI"]):
@@ -174,14 +193,13 @@ def render_report(report_df: pd.DataFrame, tanggal_str: str, sesi: str = "PAGI",
         d.rectangle([x0, y4, x0 + col_w3, y4 + LEGAL_ROW_H], outline=GRID)
         _text_center(d, (x0, y4, x0 + col_w3, y4 + LEGAL_ROW_H), label, f_legal)
 
-    # ---------- Baris TANGGAL ----------
+    # ---------- Baris TANGGAL (tanpa garis horizontal di atasnya) ----------
     y = box_y0 + legal_box_h
-    d.text((MARGIN, y + 6), f"TANGGAL : {tanggal_str}  ( {sesi} )", font=f_sub, fill=BLACK)
+    d.text((MARGIN + 6, y + 6), f"TANGGAL : {tanggal_str}  ( {sesi} )", font=f_sub, fill=BLACK)
     y += TANGGAL_LINE_H
 
-    y = MARGIN + top_h
-    header1_y0 = y
-    header1_y1 = y + HEADER_H1
+    y = header1_y0
+    header1_y1 = header1_y0 + HEADER_H1
     cx = MARGIN
     d.rectangle([cx, header1_y0, cx + COL_W_NO, header1_y1 + HEADER_H2], outline=GRID)
     _text_center(d, (cx, header1_y0, cx + COL_W_NO, header1_y1 + HEADER_H2), "NO", f_h)

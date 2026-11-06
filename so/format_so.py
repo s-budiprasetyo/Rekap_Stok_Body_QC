@@ -25,7 +25,7 @@ COLMAP = {
     "OP105_PERBAIKAN": "J",     # OP 105 PERBAIKAN
     "OP115_CEKULANG": "K",      # OP 115 CEK ULANG
     "OP107_TDKSET_IJP": "L",    # TDK SET CR (iJP)
-    "OP107_TDKSET_CRJP": "L",   # TDK SET CR (CRJP) -> kolom yang sama
+    "OP107_TDKSET_CRJP": "P",  # CRJP (header OP 107) -> kolom sendiri, terpisah dari iJP
     "OP110_GERINDA": "N",       # OP 110 GERINDA
     "OP120_TAP": "Q",           # OP 120 TAP
     "OP166_FITTINGST": "S",     # OP 166 FITTING

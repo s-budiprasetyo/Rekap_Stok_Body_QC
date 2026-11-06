@@ -6,6 +6,7 @@ import pandas as pd
 import common
 import engine
 import gsheets
+import ui_calendar
 
 # Simpan otomatis ke Histori Google Sheets setiap kali Generate berhasil -- DIMATIKAN lagi
 # (29 Okt 2026) atas permintaan Anda: simpan-otomatis tanpa konfirmasi dirasa kurang aman
@@ -152,15 +153,19 @@ def render_page():
     upload_report = None
 
     if use_history:
-        snap_list = common.cached_snapshots()
-        labels = [s["label"] for s in snap_list]
-        # default: snapshot paling baru dengan Sesi SORE (kemarin sore), kalau tidak ada -> paling atas
-        default_idx = next((i for i, s in enumerate(snap_list) if s["sesi"] == "SORE"), 0)
-        chosen_label = st.selectbox(
-            "Pilih snapshot histori (untuk OP105-OP166 & manual) — biasanya: kemarin, Sore:",
-            labels, index=default_idx,
+        snap_list = [s for s in common.cached_snapshots() if s["date_obj"]]
+        # default: snapshot paling baru dengan Sesi SORE (kemarin sore), kalau tidak ada -> paling baru
+        default_snap = next((s for s in snap_list if s["sesi"] == "SORE"), snap_list[0])
+        enabled_dates = sorted({s["date_obj"] for s in snap_list})
+        picked_date = ui_calendar.date_picker_apply(
+            "hist_pick", enabled_dates=enabled_dates, default=default_snap["date_obj"],
+            label="Pilih tanggal histori (untuk OP105-OP166 & manual) — biasanya: kemarin:",
         )
-        history_snapshot = next(s for s in snap_list if s["label"] == chosen_label)
+        sesi_opts = [s["sesi"] for s in snap_list if s["date_obj"] == picked_date]
+        sesi_idx = sesi_opts.index("SORE") if "SORE" in sesi_opts else 0
+        sesi_hist = st.selectbox("Sesi histori", sesi_opts, index=sesi_idx, key=f"hist_sesi_{picked_date}")
+        history_snapshot = next(s for s in snap_list if s["date_obj"] == picked_date and s["sesi"] == sesi_hist)
+        chosen_label = history_snapshot["label"]
         history_map = common.cached_history_map(history_snapshot["tanggal"], history_snapshot["sesi"])
         st.caption(f"Histori dipilih: **{chosen_label}** ({len(history_map)} Type tersimpan).")
 
@@ -225,7 +230,9 @@ def render_page():
     st.header("3️⃣ Tanggal & Sesi")
     col1, col2 = st.columns(2)
     with col1:
-        tanggal_str = st.text_input("Tanggal (otomatis hari ini, bisa diubah kalau perlu)", value=engine.today_id_date())
+        tanggal_pick = ui_calendar.date_picker_apply(
+            "input_tgl", default=ui_calendar.today_wib(), label="Tanggal laporan (otomatis hari ini, bisa diubah)")
+        tanggal_str = ui_calendar.fmt_id(tanggal_pick)
     with col2:
         sesi = st.selectbox("Sesi", ["PAGI", "SORE"])
 

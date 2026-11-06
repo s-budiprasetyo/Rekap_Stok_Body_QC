@@ -263,3 +263,38 @@ def append_history(st, report_df: pd.DataFrame, tanggal_str: str, sesi: str) -> 
         return True, msg
     except Exception as e:
         return False, f"Gagal menyimpan ke Google Sheets: {e}"
+
+
+def list_all_history_snapshots(st):
+    """Seperti list_history_snapshots, tapi membaca SEMUA tab bulanan ('Oktober 2026', dst) --
+    dipakai halaman Ambil Data supaya histori bulan-bulan lama tetap bisa dipilih.
+    Tab lain (mis. 'SO Oktober 2026' milik Stok Opname) otomatis diabaikan."""
+    import re
+    import engine
+    if not is_configured(st):
+        return []
+    try:
+        client = _get_client(st)
+        sh = client.open(st.secrets["gsheet_name"])
+        worksheets = sh.worksheets()
+    except Exception:
+        return []
+    pat = re.compile(r"^(%s) \d{4}$" % "|".join(engine.BULAN_ID))
+    seen = {}
+    for ws in worksheets:
+        if not pat.match(ws.title):
+            continue
+        try:
+            for r in ws.get_all_records():
+                tanggal, sesi = str(r.get("Tanggal", "")).strip(), str(r.get("Sesi", "")).strip()
+                if tanggal and sesi:
+                    seen[(tanggal, sesi)] = True
+        except Exception:
+            continue
+    items = []
+    for (tanggal, sesi) in seen:
+        d = engine.parse_id_date(tanggal)
+        if d:
+            items.append({"tanggal": tanggal, "sesi": sesi, "date_obj": d, "label": f"{tanggal} ( {sesi} )"})
+    items.sort(key=lambda x: (x["date_obj"], x["sesi"]), reverse=True)
+    return items

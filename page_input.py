@@ -1,9 +1,8 @@
-import base64
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 
 import common
+import dl_helper
 import engine
 import gsheets
 import ui_calendar
@@ -14,24 +13,6 @@ import ui_calendar
 # konfirmasi simpan sekarang muncul sebagai dialog tiap kali tombol Download diklik (lihat
 # _confirm_save_and_download di bawah) -- jadi keputusan simpan selalu eksplisit per unduhan.
 AUTO_SAVE_HISTORI = False
-
-
-def _trigger_browser_download(data: bytes, filename: str, mime: str):
-    """Memicu unduhan file browser secara otomatis (tanpa klik tombol native kedua) lewat
-    link <a download> yang di-klik otomatis via JS, dibungkus di iframe komponen Streamlit.
-    Ini trik yang umum dipakai krn Streamlit sendiri tidak punya cara memicu unduhan murni
-    dari kode server. CATATAN: beberapa browser/pengaturan keamanan bisa saja memblokir
-    auto-klik di dalam iframe -- makanya tombol unduh manual tetap ditampilkan sebagai
-    cadangan tepat di bawahnya, supaya file tidak pernah "hilang begitu saja" kalau trik
-    ini gagal jalan."""
-    b64 = base64.b64encode(data).decode()
-    html = f"""
-    <html><body>
-    <a id="auto-dl-link" href="data:{mime};base64,{b64}" download="{filename}" style="display:none"></a>
-    <script>document.getElementById('auto-dl-link').click();</script>
-    </body></html>
-    """
-    components.html(html, height=0, width=0)
 
 
 @st.dialog("Simpan sebagai histori?")
@@ -51,14 +32,13 @@ def _confirm_save_and_download(data_bytes: bytes, filename: str, mime: str,
     if choice is not None:
         if choice:
             if gsheets_ready:
-                ok, msg = gsheets.append_history(st, report_df, tanggal_str, sesi)
-                (st.success if ok else st.error)(msg)
+                with st.spinner("Menyimpan ke histori..."):
+                    ok, msg = gsheets.append_history(st, report_df, tanggal_str, sesi)
+                dl_helper.flash("success" if ok else "error", msg)
             else:
-                st.warning("Google Sheets belum dikonfigurasi — tidak bisa disimpan.")
-        _trigger_browser_download(data_bytes, filename, mime)
-        st.caption("Unduhan dimulai otomatis. Kalau tidak jalan, klik tombol di bawah ini:")
-        st.download_button("⬇️ Download sekarang", data=data_bytes, file_name=filename, mime=mime,
-                            use_container_width=True)
+                dl_helper.flash("warning", "Google Sheets belum dikonfigurasi — tidak bisa disimpan.")
+        dl_helper.queue_download(data_bytes, filename, mime)
+        st.rerun()  # dialog langsung hilang; unduhan jalan otomatis di run berikutnya
 
 
 def _render_checklist(report: dict):
@@ -90,6 +70,7 @@ def _render_checklist(report: dict):
 
 
 def render_page():
+    dl_helper.run_pending()
     st.title("📋 Rekap Stok Body Harian QC")
 
     with st.expander("🔧 Tes Koneksi Google Sheets (klik untuk cek)"):

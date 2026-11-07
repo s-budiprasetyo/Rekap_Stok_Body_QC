@@ -249,3 +249,29 @@ def manual_from_history(master_df: pd.DataFrame, history_map: dict) -> dict:
 def build_so_report(grouped: pd.DataFrame, master_df: pd.DataFrame, manual_values: dict):
     """Return (report_df, unmatched_df) -- format sama persis dgn laporan Rekap Harian."""
     return engine.build_report_table(grouped, master_df, manual_values)
+
+
+# ----------------------------------------------------------------------
+# Penjaga pengurang ganda
+# ----------------------------------------------------------------------
+def file_signature(raw_bytes: bytes, posting_date, lokasi_awal, default_op: str) -> str:
+    """Sidik jari 'file + pilihan' pengurang: file yang sama dgn tanggal/lokasi/OP yang sama
+    selalu menghasilkan sidik jari yang sama."""
+    import hashlib
+    h = hashlib.sha1(raw_bytes).hexdigest()[:12]
+    lok = ",".join(sorted(lokasi_awal)) if lokasi_awal else "-"
+    return f"{h}|{posting_date}|{lok}|{default_op}"
+
+
+def corr_summary(df: pd.DataFrame):
+    """(jumlah baris, total pcs)."""
+    d = clean_corrections(df)
+    return len(d), int(d["Jumlah"].sum()) if len(d) else 0
+
+
+def tables_equal(a: pd.DataFrame, b: pd.DataFrame) -> bool:
+    a, b = clean_corrections(a), clean_corrections(b)
+    key = CORR_COLS[:-1]
+    a = a.sort_values(key).reset_index(drop=True)
+    b = b.sort_values(key).reset_index(drop=True)
+    return a.equals(b)

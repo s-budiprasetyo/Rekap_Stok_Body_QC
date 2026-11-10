@@ -33,8 +33,9 @@ def _cached_read_so(file):
     return engine_so.read_so_file(file)
 
 
-@st.dialog("Simpan sebagai histori Stok Opname?")
+@st.dialog("Simpan sebagai histori Stok Opname?", on_dismiss="rerun")
 def _save_dialog(data_bytes, filename, mime, report_df, tanggal_str, gs_ready):
+    st.session_state["_dlg_busy"] = True
     st.write(f"Simpan laporan Stok Opname **{tanggal_str} ({SESI_SO})** ke histori (tab terpisah dari Stok Body Harian)?")
     c1, c2 = st.columns(2)
     choice = None
@@ -87,8 +88,9 @@ def _open_customize(grouped, so_date):
     _customize_dialog(sorted(grouped["Type"].unique()), sorted(grouped["Warna"].unique()), so_date)
 
 
-@st.dialog("⚙️🔧 Customize — Pengurang Stok", width="large")
+@st.dialog("⚙️🔧 Customize — Pengurang Stok", width="large", on_dismiss="rerun")
 def _customize_dialog(type_opts, warna_opts, so_date):
+    st.session_state["_dlg_busy"] = True
     maxed = st.session_state.get("so_dlg_max", False)
     _dialog_css(maxed)
     with st.container(key="so_dlg_ctl"):
@@ -203,9 +205,15 @@ def _result_section(master_df):
     inp = st.session_state.get("so_inputs")
     if not inp:
         return
+    # Nilai CRJP/U104ST/S90097/TX60V1 dibaca ULANG dari Google Sheet tiap render (bukan dikunci
+    # saat Generate), jadi perubahan di Sheet langsung ikut.
+    manual_values = inp["manual_values"]
+    if inp.get("hist_tanggal"):
+        manual_values = engine_so.manual_from_history(
+            master_df, common.cached_history_map(inp["hist_tanggal"], SESI_SO))
     corr = st.session_state.get("so_corrections", engine_so.empty_corrections())
     grouped_adj, log = engine_so.apply_corrections(inp["grouped"], corr)  # selalu dari stok ASLI
-    report_df, unmatched = engine_so.build_so_report(grouped_adj, master_df, inp["manual_values"])
+    report_df, unmatched = engine_so.build_so_report(grouped_adj, master_df, manual_values)
     tanggal = inp["tanggal_str"]
 
     if not unmatched.empty:
@@ -235,7 +243,9 @@ def _result_section(master_df):
 
 
 def render_page():
+    st.session_state["_dlg_busy"] = False
     dl_helper.run_pending()
+    common.sheet_watcher()
     st.markdown(CSS, unsafe_allow_html=True)
     st.title("📦 Stok Opname")
     st.caption("Upload 1 file 'Report Stock Opname', pilih tanggal histori, lalu Generate. Semua laporan masuk sesi SORE.")
@@ -273,8 +283,10 @@ def render_page():
                                                        label="Ambil data dari histori tanggal:")
             hmap = common.cached_history_map(ui_calendar.fmt_id(hist_date), SESI_SO) if hist_date else {}
             manual_values = engine_so.manual_from_history(master_df, hmap)
-            with st.expander(f"Nilai {MANUAL_NOTE} yang diambil"):
-                st.dataframe(pd.DataFrame({"Type": list(manual_values), "Jumlah": list(manual_values.values())}),
+            with st.expander(f"Nilai {MANUAL_NOTE} yang diambil (otomatis ikut perubahan di Google Sheet)"):
+                _tc = master_df.set_index("RowLabel")["ManualTargetColumn"].to_dict()
+                st.dataframe(pd.DataFrame({"Type": list(manual_values), "Kolom Sheet": [_tc.get(k, "") or "(langsung total)" for k in manual_values],
+                                           "Jumlah": list(manual_values.values())}),
                              hide_index=True, use_container_width=True)
         else:
             st.info(f"Belum ada histori sesi SORE di Google Sheets — nilai {MANUAL_NOTE} dianggap 0.")
@@ -297,7 +309,8 @@ def render_page():
             custom = st.button(":material/settings: :material/build: Customize", disabled=grouped is None,
                                use_container_width=True, help="Kurangi stok (mis. barang yang sudah diterima Packing)")
     if gen:
-        st.session_state["so_inputs"] = {"grouped": grouped, "manual_values": manual_values, "tanggal_str": tanggal_str}
+        st.session_state["so_inputs"] = {"grouped": grouped, "manual_values": manual_values, "tanggal_str": tanggal_str,
+                                         "hist_tanggal": ui_calendar.fmt_id(hist_date) if hist_date else None}
     if custom:
         _open_customize(grouped, engine.parse_id_date(tanggal_str))
 

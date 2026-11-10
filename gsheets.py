@@ -256,6 +256,12 @@ def append_history(st, report_df: pd.DataFrame, tanggal_str: str, sesi: str) -> 
         ws.clear()
         ws.update(values=all_rows, value_input_option="USER_ENTERED")
 
+        if sesi == "SORE":
+            try:  # penyimpanan lewat aplikasi bukan 'edit manual': perbarui basis SO (kalau sudah ada)
+                from so import gs_so
+                gs_so.refresh_basis(st, tanggal_str, only_if_exists=True)
+            except Exception:
+                pass
         msg = f"{len(new_rows)} baris tersimpan ke tab '{tab_name}'"
         if removed_count:
             msg += f" (menimpa {removed_count} baris lama untuk {tanggal_str} / {sesi})"

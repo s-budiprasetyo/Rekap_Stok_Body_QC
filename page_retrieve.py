@@ -12,20 +12,37 @@ JENIS_SO = "Stok Opname"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def _snap_harian():
-    return gsheets.list_all_history_snapshots(st)
-
-
-@st.cache_data(ttl=60, show_spinner=False)
-def _snap_so():
-    return gs_so.list_so_snapshots(st)
+def _build_result(q):
+    """Bangun hasil dari permintaan (jenis, tanggal, sesi) -- dibaca ulang dari Google Sheet tiap
+    render (cache 10 dtk), jadi perubahan di Sheet langsung ikut. Return (res, error)."""
+    jenis, tanggal_str, sesi = q["jenis"], q["tanggal"], q["sesi"]
+    if jenis == JENIS_SO:
+        report_df = common.cached_so_report(tanggal_str)
+        if report_df is None:
+            return None, f"Tidak ditemukan Stok Opname tersimpan untuk **{tanggal_str}**."
+        return {"jenis": jenis, "tanggal": tanggal_str, "sesi": "SORE", "missing": [],
+                "png": so_cached.so_png(report_df, tanggal_str),
+                "xlsx": so_cached.so_xlsx(report_df, tanggal_str),
+                "base": f"Stok_Opname_{tanggal_str.replace(' ', '_')}_SORE"}, None
+    history_map = common.cached_history_map(tanggal_str, sesi)
+    if not history_map:
+        return None, f"Tidak ditemukan laporan tersimpan untuk **{tanggal_str} ({sesi})**."
+    master_df, _ = common.get_master_and_manual_rows()
+    report_df, missing = engine.build_report_table_from_snapshot(master_df, history_map)
+    return {"jenis": jenis, "tanggal": tanggal_str, "sesi": sesi, "missing": missing,
+            "png": common.cached_render_png(report_df, tanggal_str, sesi),
+            "xlsx": common.cached_build_excel(report_df, tanggal_str, sesi),
+            "base": f"Stok_Body_{tanggal_str.replace(' ', '_')}_{sesi}"}, None
 
 
 @st.fragment
 def _show_result():
-    res = st.session_state.get("ambil_result")
-    if not res:
+    q = st.session_state.get("ambil_query")
+    if not q:
+        return
+    res, err = _build_result(q)
+    if err:
+        st.error(err)
         return
     if res["missing"]:
         with st.expander(f"⚠️ {len(res['missing'])} Type tidak ada di histori tersimpan (diisi 0)"):
@@ -51,9 +68,10 @@ def render_page():
         )
         return
 
+    common.sheet_watcher()
     jenis = st.radio("Data yang diambil", [JENIS_HARIAN, JENIS_SO], horizontal=True, key="ambil_jenis")
     is_so = jenis == JENIS_SO
-    snaps = [s for s in (_snap_so() if is_so else _snap_harian()) if s["date_obj"]]
+    snaps = [s for s in (common.cached_snap_so() if is_so else common.cached_snap_harian()) if s["date_obj"]]
     if not snaps:
         st.info(f"Belum ada histori {jenis} yang tersimpan di Google Sheets.")
         return
@@ -73,32 +91,9 @@ def render_page():
 
     tanggal_str = ui_calendar.fmt_id(picked)
     if st.button("🔍 Ambil Gambar", type="primary"):
-        with st.spinner("Mencari & memuat data..."):
-            if is_so:
-                report_df = gs_so.fetch_so_report(st, tanggal_str)
-                if report_df is None:
-                    st.session_state.pop("ambil_result", None)
-                    st.error(f"Tidak ditemukan Stok Opname tersimpan untuk **{tanggal_str}**.")
-                    return
-                st.session_state["ambil_result"] = {
-                    "jenis": jenis, "tanggal": tanggal_str, "sesi": "SORE", "missing": [],
-                    "png": so_cached.so_png(report_df, tanggal_str),
-                    "xlsx": so_cached.so_xlsx(report_df, tanggal_str),
-                    "base": f"Stok_Opname_{tanggal_str.replace(' ', '_')}_SORE",
-                }
-            else:
-                history_map = gsheets.fetch_history_snapshot(st, tanggal_str, sesi)
-                if not history_map:
-                    st.session_state.pop("ambil_result", None)
-                    st.error(f"Tidak ditemukan laporan tersimpan untuk **{tanggal_str} ({sesi})**.")
-                    return
-                master_df, _ = common.get_master_and_manual_rows()
-                report_df, missing = engine.build_report_table_from_snapshot(master_df, history_map)
-                st.session_state["ambil_result"] = {
-                    "jenis": jenis, "tanggal": tanggal_str, "sesi": sesi, "missing": missing,
-                    "png": common.cached_render_png(report_df, tanggal_str, sesi),
-                    "xlsx": common.cached_build_excel(report_df, tanggal_str, sesi),
-                    "base": f"Stok_Body_{tanggal_str.replace(' ', '_')}_{sesi}",
-                }
+        if is_so:
+            common.sync_now()  # terapkan dulu cell yang Anda ubah di tab bulan ke tab SO
+            common.cached_so_report.clear()
+        st.session_state["ambil_query"] = {"jenis": jenis, "tanggal": tanggal_str, "sesi": sesi}
 
     _show_result()

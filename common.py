@@ -25,14 +25,14 @@ def gsheets_ready() -> bool:
     return gsheets.is_configured(st)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=10, show_spinner=False)
 def cached_snapshots():
-    """Daftar snapshot histori — disimpan sementara 60 detik supaya tidak nge-hit
-    Google Sheets berkali-kali tiap kali ada interaksi (ketik/geser input)."""
+    """Daftar snapshot histori — disimpan sementara 10 detik supaya tidak nge-hit
+    Google Sheets berkali-kali tiap kali ada interaksi. Pendek (10 dtk) supaya perubahan di Sheet cepat terbaca."""
     return gsheets.list_history_snapshots(st)
 
 
-@st.cache_data(ttl=60, show_spinner=False)
+@st.cache_data(ttl=10, show_spinner=False)
 def cached_history_map(tanggal: str, sesi: str):
     return gsheets.fetch_history_snapshot(st, tanggal, sesi)
 
@@ -66,3 +66,62 @@ def cached_render_png(report_df, tanggal_str: str, sesi: str) -> bytes:
 def cached_build_excel(report_df, tanggal_str: str, sesi: str) -> bytes:
     """Cache hasil build file Excel -- sama alasannya dgn cached_render_png di atas."""
     return excel_export.build_excel(report_df, tanggal_str, sesi)
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def cached_snap_harian():
+    return gsheets.list_all_history_snapshots(st)
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def cached_snap_so():
+    from so import gs_so
+    return gs_so.list_so_snapshots(st)
+
+
+@st.cache_data(ttl=10, show_spinner=False)
+def cached_so_report(tanggal_str: str):
+    from so import gs_so
+    return gs_so.fetch_so_report(st, tanggal_str)
+
+
+@st.cache_data(ttl=15, show_spinner=False)
+def _poll_sheet():
+    from so import gs_so
+    _, manual_rows = get_master_and_manual_rows()
+    return gs_so.sync_so_from_harian(st, manual_rows)
+
+
+def clear_sheet_caches():
+    for f in (cached_snapshots, cached_history_map, cached_snap_harian, cached_snap_so, cached_so_report):
+        f.clear()
+
+
+@st.fragment(run_every=20)
+def sheet_watcher():
+    """Cek Google Sheet tiap ~20 detik (tanpa tombol). (1) menerapkan cell yang Anda ubah di tab
+    bulan ke tab SO; (2) kalau isi Sheet berubah, halaman dimuat ulang otomatis & hasil
+    mengikuti angka terbaru."""
+    if not gsheets_ready():
+        return
+    fp, _changed = _poll_sheet()
+    if fp is None:
+        return
+    last = st.session_state.get("_sheet_fp")
+    if last is None:
+        st.session_state["_sheet_fp"] = fp
+    elif fp != last and not st.session_state.get("_dlg_busy"):  # sedang buka dialog -> tunda
+        st.session_state["_sheet_fp"] = fp
+        clear_sheet_caches()
+        st.session_state["_regen"] = True
+        st.rerun()
+
+
+def sync_now():
+    """Sinkron perubahan tab bulan -> tab SO saat itu juga (tanpa menunggu pemeriksaan berkala)."""
+    from so import gs_so
+    _, manual_rows = get_master_and_manual_rows()
+    try:
+        gs_so.sync_so_from_harian(st, manual_rows)
+    except Exception:
+        pass

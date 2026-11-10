@@ -15,10 +15,11 @@ import ui_calendar
 AUTO_SAVE_HISTORI = False
 
 
-@st.dialog("Simpan sebagai histori?")
+@st.dialog("Simpan sebagai histori?", on_dismiss="rerun")
 def _confirm_save_and_download(data_bytes: bytes, filename: str, mime: str,
                                 report_df: pd.DataFrame, tanggal_str: str, sesi: str,
                                 gsheets_ready: bool):
+    st.session_state["_dlg_busy"] = True
     st.write(f"Simpan laporan **{tanggal_str} ({sesi})** ini ke histori Stok Body (Google Sheets) juga?")
     col1, col2 = st.columns(2)
     choice = None
@@ -70,7 +71,9 @@ def _render_checklist(report: dict):
 
 
 def render_page():
+    st.session_state["_dlg_busy"] = False
     dl_helper.run_pending()
+    common.sheet_watcher()
     st.title("📋 Rekap Stok Body Harian QC")
 
     with st.expander("🔧 Tes Koneksi Google Sheets (klik untuk cek)"):
@@ -190,6 +193,9 @@ def render_page():
     # Dengan menambahkan mode+snapshot ke key, ganti snapshot/mode = widget baru = default
     # yang baru dihitung benar-benar dipakai lagi.
     history_key_part = history_snapshot["label"] if (use_history and history_snapshot) else "no-history"
+    if use_history and history_map:  # isi histori berubah di Google Sheet -> default input ikut berubah
+        import hashlib, json
+        history_key_part += "|" + hashlib.md5(json.dumps(history_map, sort_keys=True).encode()).hexdigest()[:8]
 
     manual_values = {}
     cols = st.columns(3)
@@ -232,7 +238,12 @@ def _generate_section(grouped, op100_uploaded, use_history, history_map,
 
     can_generate = (not grouped.empty) if not use_history else (op100_uploaded)
 
-    if st.button("🖼️ Generate", type="primary", disabled=not can_generate):
+    # Isi Google Sheet berubah (terdeteksi otomatis) & laporan mode-histori sudah pernah di-Generate
+    # -> hitung ulang dengan angka histori terbaru, tanpa perlu klik Generate lagi.
+    regen = bool(st.session_state.pop("_regen", False)) and use_history and can_generate \
+        and st.session_state.get("gen_use_history") and "report_df" in st.session_state
+
+    if st.button("🖼️ Generate", type="primary", disabled=not can_generate) or regen:
         if use_history:
             op100_values, unmatched_op100 = engine.match_op100_only(grouped, master_df)
             report_df, missing_types = engine.build_report_table_from_history(
@@ -246,6 +257,7 @@ def _generate_section(grouped, op100_uploaded, use_history, history_map,
             st.session_state["unmatched_df"] = unmatched_df
 
         st.session_state["report_df"] = report_df
+        st.session_state["gen_use_history"] = use_history
         st.session_state["tanggal_str"] = tanggal_str
         st.session_state["sesi"] = sesi
         st.session_state.pop("auto_save_msg", None)

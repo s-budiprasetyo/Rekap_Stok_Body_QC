@@ -256,12 +256,6 @@ def append_history(st, report_df: pd.DataFrame, tanggal_str: str, sesi: str) -> 
         ws.clear()
         ws.update(values=all_rows, value_input_option="USER_ENTERED")
 
-        if sesi == "SORE":
-            try:  # penyimpanan lewat aplikasi bukan 'edit manual': perbarui basis SO (kalau sudah ada)
-                from so import gs_so
-                gs_so.refresh_basis(st, tanggal_str, only_if_exists=True)
-            except Exception:
-                pass
         msg = f"{len(new_rows)} baris tersimpan ke tab '{tab_name}'"
         if removed_count:
             msg += f" (menimpa {removed_count} baris lama untuk {tanggal_str} / {sesi})"
@@ -304,3 +298,12 @@ def list_all_history_snapshots(st):
             items.append({"tanggal": tanggal, "sesi": sesi, "date_obj": d, "label": f"{tanggal} ( {sesi} )"})
     items.sort(key=lambda x: (x["date_obj"], x["sesi"]), reverse=True)
     return items
+
+
+def fingerprint_tab(st, tanggal_str: str):
+    """Sidik jari isi tab bulan tsb (None kalau tab belum ada) -- untuk deteksi edit manual di Sheet."""
+    try:
+        sh = _get_client(st).open(st.secrets["gsheet_name"])
+        return hash(repr(sh.worksheet(_tab_name_for_tanggal_str(tanggal_str)).get_all_values()))
+    except Exception:
+        return None

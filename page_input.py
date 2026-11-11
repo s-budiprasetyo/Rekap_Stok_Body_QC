@@ -74,6 +74,7 @@ def render_page():
     st.session_state["_dlg_busy"] = False
     dl_helper.run_pending()
     common.sheet_watcher()
+    common.watch()  # diisi ulang di bawah kalau mode histori dipakai
     st.title("📋 Rekap Stok Body Harian QC")
 
     with st.expander("🔧 Tes Koneksi Google Sheets (klik untuk cek)"):
@@ -150,6 +151,7 @@ def render_page():
         sesi_hist = st.selectbox("Sesi histori", sesi_opts, index=sesi_idx, key=f"hist_sesi_{picked_date}")
         history_snapshot = next(s for s in snap_list if s["date_obj"] == picked_date and s["sesi"] == sesi_hist)
         chosen_label = history_snapshot["label"]
+        common.watch(("harian", history_snapshot["tanggal"]))
         history_map = common.cached_history_map(history_snapshot["tanggal"], history_snapshot["sesi"])
         st.caption(f"Histori dipilih: **{chosen_label}** ({len(history_map)} Type tersimpan).")
 

@@ -246,6 +246,7 @@ def render_page():
     st.session_state["_dlg_busy"] = False
     dl_helper.run_pending()
     common.sheet_watcher()
+    common.watch()
     st.markdown(CSS, unsafe_allow_html=True)
     st.title("📦 Stok Opname")
     st.caption("Upload 1 file 'Report Stock Opname', pilih tanggal histori, lalu Generate. Semua laporan masuk sesi SORE.")
@@ -281,6 +282,8 @@ def render_page():
             default = so_date if so_date in dates else dates[-1]
             hist_date = ui_calendar.date_picker_apply("so_hist", enabled_dates=dates, default=default,
                                                        label="Ambil data dari histori tanggal:")
+            if hist_date:
+                common.watch(("harian", ui_calendar.fmt_id(hist_date)))
             hmap = common.cached_history_map(ui_calendar.fmt_id(hist_date), SESI_SO) if hist_date else {}
             manual_values = engine_so.manual_from_history(master_df, hmap)
             with st.expander(f"Nilai {MANUAL_NOTE} yang diambil (otomatis ikut perubahan di Google Sheet)"):

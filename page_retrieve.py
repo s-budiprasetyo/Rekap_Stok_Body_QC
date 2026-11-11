@@ -90,9 +90,9 @@ def render_page():
                             key=f"ambil_sesi_{picked}")
 
     tanggal_str = ui_calendar.fmt_id(picked)
+    common.watch(("so" if is_so else "harian", tanggal_str))
     if st.button("🔍 Ambil Gambar", type="primary"):
         if is_so:
-            common.sync_now()  # terapkan dulu cell yang Anda ubah di tab bulan ke tab SO
             common.cached_so_report.clear()
         st.session_state["ambil_query"] = {"jenis": jenis, "tanggal": tanggal_str, "sesi": sesi}
 

@@ -85,43 +85,40 @@ def cached_so_report(tanggal_str: str):
     return gs_so.fetch_so_report(st, tanggal_str)
 
 
-@st.cache_data(ttl=15, show_spinner=False)
-def _poll_sheet():
-    from so import gs_so
-    _, manual_rows = get_master_and_manual_rows()
-    return gs_so.sync_so_from_harian(st, manual_rows)
-
-
 def clear_sheet_caches():
     for f in (cached_snapshots, cached_history_map, cached_snap_harian, cached_snap_so, cached_so_report):
         f.clear()
 
 
-@st.fragment(run_every=20)
+def watch(*targets):
+    """Daftarkan tab yang sedang dipakai halaman ini: ("harian"|"so", "7 November 2026").
+    Hanya tab-tab ini yang dicek watcher (ringan) -- bukan seluruh Sheet."""
+    st.session_state["_watch"] = tuple(t for t in targets if t and t[1])
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def _poll(targets):
+    from so import gs_so
+    out = []
+    for kind, tgl in targets:
+        out.append(gs_so.fingerprint_tab(st, tgl) if kind == "so" else gsheets.fingerprint_tab(st, tgl))
+    return tuple(out)
+
+
+@st.fragment(run_every=30)
 def sheet_watcher():
-    """Cek Google Sheet tiap ~20 detik (tanpa tombol). (1) menerapkan cell yang Anda ubah di tab
-    bulan ke tab SO; (2) kalau isi Sheet berubah, halaman dimuat ulang otomatis & hasil
-    mengikuti angka terbaru."""
-    if not gsheets_ready():
+    """Cek tab Google Sheet yang sedang dipakai tiap ~30 detik (tanpa tombol, hanya membaca).
+    Halaman dimuat ulang HANYA kalau isi tab itu benar-benar berubah (Anda edit manual di Sheet)."""
+    targets = st.session_state.get("_watch", ())
+    if not gsheets_ready() or not targets:
         return
-    fp, _changed = _poll_sheet()
-    if fp is None:
-        return
+    fp = _poll(targets)
     last = st.session_state.get("_sheet_fp")
-    if last is None:
-        st.session_state["_sheet_fp"] = fp
-    elif fp != last and not st.session_state.get("_dlg_busy"):  # sedang buka dialog -> tunda
-        st.session_state["_sheet_fp"] = fp
+    if last is None or last[0] != targets:
+        st.session_state["_sheet_fp"] = (targets, fp)
+    elif fp != last[1] and not st.session_state.get("_dlg_busy"):  # sedang buka dialog -> tunda
+        st.session_state["_sheet_fp"] = (targets, fp)
         clear_sheet_caches()
+        _poll.clear()
         st.session_state["_regen"] = True
         st.rerun()
-
-
-def sync_now():
-    """Sinkron perubahan tab bulan -> tab SO saat itu juga (tanpa menunggu pemeriksaan berkala)."""
-    from so import gs_so
-    _, manual_rows = get_master_and_manual_rows()
-    try:
-        gs_so.sync_so_from_harian(st, manual_rows)
-    except Exception:
-        pass
